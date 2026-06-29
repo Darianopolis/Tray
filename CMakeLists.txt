@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 4.0)
 project(Tray)
 
+# ------------------------------------------------------------------------------
+
 add_library(imgui)
 target_include_directories(imgui PUBLIC imgui)
 target_sources(imgui PRIVATE
@@ -14,9 +16,35 @@ target_sources(imgui PRIVATE
   imgui/backends/imgui_impl_sdlrenderer3.cpp
   )
 
-add_executable(tray)
-target_compile_options(tray PUBLIC -std=c++26)
-target_sources(tray PUBLIC main.cpp)
-target_link_libraries(tray PUBLIC SDL3 imgui)
+# ------------------------------------------------------------------------------
 
-install(TARGETS tray RUNTIME DESTINATION bin)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SDL3       REQUIRED IMPORTED_TARGET sdl3)
+pkg_check_modules(libsystemd REQUIRED IMPORTED_TARGET libsystemd)
+pkg_check_modules(gtk        REQUIRED IMPORTED_TARGET gtk+-3.0)
+pkg_check_modules(gdk-pixbuf REQUIRED IMPORTED_TARGET gdk-pixbuf-2.0)
+
+# ------------------------------------------------------------------------------
+
+add_executable(tray-service)
+target_compile_options(tray-service PUBLIC -std=c++26 -freflection)
+target_sources(tray-service PUBLIC src/service.cpp)
+target_link_libraries(tray-service PUBLIC PkgConfig::libsystemd stdc++exp)
+
+# ------------------------------------------------------------------------------
+
+add_executable(tray)
+target_compile_options(tray PUBLIC -std=c++26 -freflection)
+target_sources(tray PUBLIC src/tray.cpp)
+target_link_libraries(tray PUBLIC
+    PkgConfig::SDL3
+    PkgConfig::libsystemd
+    PkgConfig::gtk
+    PkgConfig::gdk-pixbuf
+    imgui
+    stdc++exp
+    )
+
+# ------------------------------------------------------------------------------
+
+install(TARGETS tray-service tray RUNTIME DESTINATION bin)

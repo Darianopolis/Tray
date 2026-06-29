@@ -1,0 +1,186 @@
+StatusNotifierItem
+
+    Properties
+
+        Category: STRING
+
+            Describes the category of this item.
+
+            The allowed values for the Category property are:
+
+            ApplicationStatus: The item describes the status of a generic application, for instance the current state of a media player. In the case where the category of the item can not be known, such as when the item is being proxied from another incompatible or emulated system, ApplicationStatus can be used a sensible default fallback.
+
+            Communications: The item describes the status of communication oriented applications, like an instant messenger or an email client.
+
+            SystemServices: The item describes services of the system not seen as a stand alone application by the user, such as an indicator for the activity of a disk indexing service.
+
+            Hardware: The item describes the state and control of a particular hardware, such as an indicator of the battery charge or sound card volume control.
+
+        Id: STRING
+
+            It's a name that should be unique for this application and consistent between sessions, such as the application name itself.
+
+        Title: STRING
+
+            It's a name that describes the application, it can be more descriptive than Id.
+
+        Status: STRING
+
+            Describes the status of this item or of the associated application.
+
+            The allowed values for the Status property are:
+
+            Passive: The item doesn't convey important information to the user, it can be considered an "idle" status and is likely that visualizations will chose to hide it.
+
+            Active: The item is active, is more important that the item will be shown in some way to the user.
+
+            NeedsAttention: The item carries really important information for the user, such as battery charge running out and is wants to incentive the direct user intervention. Visualizations should emphasize in some way the items with NeedsAttention status.
+
+        WindowId: UINT32
+
+            It's the windowing-system dependent identifier for a window, the application can chose one of its windows to be available through this property or just set 0 if it's not interested.
+
+        IconName: STRING
+
+            The StatusNotifierItem can carry an icon that can be used by the visualization to identify the item.
+
+            An icon can either be identified by its Freedesktop-compliant icon name, carried by this property of by the icon data itself, carried by the property IconPixmap. Visualizations are encouraged to prefer icon names over icon pixmaps if both are available (FIXME: still not very defined: could e the pixmap used as fallback if an icon name is not found?)
+
+        IconPixmap: ARRAY(INT, INT, ARRAY BYTE)
+
+            Carries an ARGB32 binary representation of the icon, the format of icon data used in this specification is described in Section Icons
+
+        OverlayIconName: STRING
+
+            The Freedesktop-compliant name of an icon. This can be used by the visualization to indicate extra state information, for instance as an overlay for the main icon.
+
+        OverlayIconPixmap: ARRAY(INT, INT, ARRAY BYTE)
+
+            ARGB32 binary representation of the overlay icon described in the previous paragraph.
+
+        AttentionIconName: STRING
+
+            The Freedesktop-compliant name of an icon. this can be used by the visualization to indicate that the item is in RequestingAttention state.
+
+        AttentionIconPixmap: ARRAY(INT, INT, ARRAY BYTE)
+
+            ARGB32 binary representation of the requesting attention icon describe in the previous paragraph.
+
+        AttentionMovieName: STRING
+
+            An item can also specify an animation associated to the RequestingAttention state. This should be either a Freedesktop-compliant icon name or a full path. The visualization can chose between the movie or AttentionIconPixmap (or using neither of those) at its discretion.
+
+        ToolTip: (STRING, ARRAY(INT, INT, ARRAY BYTE), STRING, STRING)
+
+            Data structure that describes extra information associated to this item, that can be visualized for instance by a tooltip (or by any other mean the visualization consider appropriate. Components are:
+
+            STRING: Freedesktop-compliant name for an icon.
+
+            ARRAY(INT, INT, ARRAY BYTE): icon data
+
+            STRING: title for this tooltip
+
+            STRING: descriptive text for this tooltip. It can contain also a subset of the HTML markup language, for a list of allowed tags see Section Markup.
+
+        ItemIsMenu: BOOL
+
+            The item only support the context menu, the visualization should prefer showing the menu or sending ContextMenu() instead of Activate()
+
+        Menu: OBJECT PATH
+
+            DBus path to an object which should implement the com.canonical.dbusmenu interface
+
+    Methods
+
+        ContextMenu(x: INT, y: INT)
+
+            Asks the status notifier item to show a context menu, this is typically a consequence of user input, such as mouse right click over the graphical representation of the item.
+
+            the x and y parameters are in screen coordinates and is to be considered an hint to the item about where to show the context menu.
+
+        Activate(x: INT, y: INT)
+
+            Asks the status notifier item for activation, this is typically a consequence of user input, such as mouse left click over the graphical representation of the item. The application will perform any task is considered appropriate as an activation request.
+
+            the x and y parameters are in screen coordinates and is to be considered an hint to the item where to show eventual windows (if any).
+
+        SecondaryActivate(x: INT, y: INT)
+
+            Is to be considered a secondary and less important form of activation compared to Activate. This is typically a consequence of user input, such as mouse middle click over the graphical representation of the item. The application will perform any task is considered appropriate as an activation request.
+
+            the x and y parameters are in screen coordinates and is to be considered an hint to the item where to show eventual windows (if any).
+
+        Scroll(delta: INT, orientation: STRING)
+
+            The user asked for a scroll action. This is caused from input such as mouse wheel over the graphical representation of the item.
+
+            The delta parameter represent the amount of scroll, the orientation parameter represent the horizontal or vertical orientation of the scroll request and its legal values are horizontal and vertical.
+
+    Signals
+
+        NewTitle()
+
+            The item has a new title: the graphical representation should read it again immediately.
+
+        NewIcon()
+
+            The item has a new icon: the graphical representation should read it again immediately.
+
+        NewAttentionIcon()
+
+            The item has a new attention icon: the graphical representation should read it again immediately.
+
+        NewOverlay()
+
+            The item has a new overlay icon: the graphical representation should read it again immediately.
+
+        NewToolTip()
+
+            The item has a new tooltip: the graphical representation should read it again immediately.
+
+        NewStatus(status STRING)
+
+            The item has a new status, that is passed as an argument of the signal.
+
+StatusNotifierWatcher
+
+    Methods
+
+        RegisterStatusNotifierItem(service: STRING)
+
+            Register a StatusNotifierItem into the StatusNotifierWatcher, in the form of its full name on the session bus, for instance org.freedesktop.StatusNotifierItem-4077-1. A StatusNotifierItem instance must be registered to the watcher in order to be noticed from both the watcher and the StatusNotifierHost instances. If the registered StatusNotifierItem goes away from the session bus, the StatusNotifierWatcher should automatically notice it and remove it from the list of registered services.
+
+        RegisterStatusNotifierHost(service: STRING)
+
+            Register a StatusNotifierHost into the StatusNotifierWatcher, in the form of its full name on the session bus, for instance org.freedesktop.StatusNotifierHost-4005. Every NotficationHost instance that intends to display StatusNotifierItem representations should register to StatusNotifierWatcher with this method. The StatusNotifierWatcher should automatically notice if an instance of StatusNotifierHost goes away.
+
+    Properties
+
+        RegisteredStatusNotifierItems: ARRAY(STRING)
+
+            List containing all the registered instances of StatusNotifierItem. All elements of the array should correspond to services actually running on the session bus at the moment of the method call.
+
+        IsStatusNotifierHostRegistered: BOOL
+
+            True if at least one StatusNotifierHost has been registered with the Section called RegisterStatusNotifierHost and is currently running. If no StatusNotifierHost are registered and running, all StatusNotifierItem instances should fall back using the Freedesktop System tray specification.
+
+        ProtocolVersion: INT
+
+            The version of the protocol the StatusNotifierWatcher instance implements.
+
+    Signals
+
+        StatusNotifierItemRegistered (service: STRING): BOOL
+
+            A new StatusNotifierItem has been registered, the argument of the signal is the session bus name of the instance. StatusNotifierHost implementation should listen this signal to know when they should update their representation of the items.
+
+            StatusNotifierItemUnregistered
+
+        StatusNotifierItemUnregistered(service: STRING): BOOL
+
+            A StatusNotifierItem instance has disappeared from the bus, the argument of the signal is the session bus name of the instance. StatusNotifierHost implementation should listen this signal to know when they should update their representation of the items.
+            StatusNotifierHostRegistered
+
+        StatusNotifierHostRegistered(): BOOL
+
+            A new StatusNotifierHost has been registered, the StatusNotifierItem instances knows that they can use this protocol instead of the Freedesktop System   tray protocol.

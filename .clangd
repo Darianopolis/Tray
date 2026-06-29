@@ -1,0 +1,14 @@
+CompileFlags:
+    Remove: [-fmodules-ts, -fmodule-mapper=*, -fdeps-format=*, -freflection]
+    Add:    [-Wno-unused-function]
+
+Diagnostics:
+    Suppress: unused-includes
+
+InlayHints:
+    Enabled: No
+    ParameterNames: No
+    DeducedTypes: No
+
+SemanticTokens:
+    DisabledKinds: [Operator]
