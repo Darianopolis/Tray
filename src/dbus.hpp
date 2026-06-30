@@ -1,3 +1,5 @@
+#pragma once
+
 #include "core.hpp"
 
 #include <dbus/dbus.h>

@@ -6,7 +6,7 @@
 #include <ranges>
 
 #include "icon.hpp"
-#include "dbus2.hpp"
+#include "dbus.hpp"
 
 #include <SDL3/SDL.h>
 
