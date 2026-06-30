@@ -1,6 +1,23 @@
 #include "dbus.hpp"
 
-#include <flat_set>
+#include <flat_map>
+
+static
+auto check_service(DBusConnection* conn, const char* service) -> bool
+{
+    dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus", "org.freedesktop.DBus", "GetConnectionUnixProcessID");
+    dbus::Iterator args(call.get(), dbus::iter::append);
+    args.append(DBUS_TYPE_STRING, service);
+
+    DBusError err;
+    dbus_error_init(&err);
+    defer { dbus_error_free(&err); };
+    dbus::Message reply = dbus_connection_send_with_reply_and_block(conn, call.get(), -1, &err);
+
+    bool active = dbus::Iterator(reply.get(), dbus::iter::read).get<int>().has_value();
+    if (!active) std::println("Service {} is no longer alive!", service);
+    return active;
+}
 
 int main()
 {
@@ -8,7 +25,7 @@ int main()
     dbus_error_init(&err);
     defer { dbus_error_free(&err); };
 
-    std::flat_set<std::string> items;
+    std::flat_map<std::string, std::string> items;
 
     auto* conn = dbus_bus_get(DBUS_BUS_SESSION, &err);
     defer { dbus_connection_unref(conn); };
@@ -28,7 +45,7 @@ int main()
             }
             std::println("  object_path: {}", object_path);
 
-            items.emplace(std::format("{}{}", sender, object_path));
+            items[sender] = object_path;
 
             dbus::Message reply = dbus_message_new_method_return(msg);
             dbus_connection_send(conn, reply.get(), nullptr);
@@ -43,8 +60,11 @@ int main()
     watcher.properties["org.kde.StatusNotifierWatcher"]["RegisteredStatusNotifierItems"] = {
         "as",  [&](DBusConnection*, dbus::Iterator& out) {
             auto arr = out.open(DBUS_TYPE_ARRAY, "s");
-            for (auto& item : items) {
-                arr.append(DBUS_TYPE_STRING, item.c_str());
+            std::erase_if(items, [&](const std::pair<std::string, std::string>& item) {
+                return !check_service(conn, item.first.c_str());
+            });
+            for (auto[service, path] : items) {
+                arr.append(DBUS_TYPE_STRING, std::format("{}{}", service, path).c_str());
             }
             out.close(arr);
         },
