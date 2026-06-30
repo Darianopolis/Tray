@@ -13,3 +13,5 @@ struct DeferGuard
 };
 
 #define defer DeferGuard _ = [&]
+
+auto ptr_to(auto&& v) { return &v; }

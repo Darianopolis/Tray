@@ -3,13 +3,13 @@
 #include <memory>
 #include <cstring>
 #include <fstream>
+#include <ranges>
 
 #include "icon.hpp"
-
-#include "dbus.hpp"
-#include "dbus_pack.hpp"
+#include "dbus2.hpp"
 
 #include <SDL3/SDL.h>
+
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 #include <backends/imgui_impl_sdl3.h>
@@ -37,60 +37,65 @@ struct Item
     std::function<void()> on_click;
 };
 
-sd_bus*           g_bus;
+DBusError         g_err;
+DBusConnection*   g_bus;
 std::vector<Item> g_items;
 SDL_Renderer*     g_renderer;
 
 // -----------------------------------------------------------------------------
 
 static
-auto parse_menu_item(const char* service, const char* object_path, dbus::ValueIterator item, int depth = 0) -> MenuItem
+void check_error()
 {
-    auto indent = [&](int delta = 0) {
-        return std::string(depth + delta, ' ') + std::string(depth + delta, ' ');
-    };
+    if (dbus_error_is_set(&g_err)) {
+        std::println("DBUS ERROR : {} - {}", g_err.name, g_err.message);
+        dbus_error_free(&g_err);
+    }
+}
 
+static
+auto call_and_wait(DBusMessage* message) -> dbus::Message
+{
+    dbus::Message reply = dbus_connection_send_with_reply_and_block(g_bus, message, -1, &g_err);
+    check_error();
+    return reply;
+}
+
+// -----------------------------------------------------------------------------
+
+static
+auto parse_menu_item(const char* service, const char* object_path, dbus::Iterator item, int depth = 0) -> MenuItem
+{
     MenuItem menu_item = {};
 
-    int32_t id = item[0].as_signed().value_or(-1);
-    std::println("{}{}", indent(), id);
+    int32_t id = item[0].get<int>().value_or(-1);
 
     menu_item.on_click = [id, service = std::string(service), object_path = std::string(object_path)] {
-        dbus::call(g_bus, service.c_str(), object_path.c_str(), "com.canonical.dbusmenu", "Event", "isvu",
-            id,
-            "clicked",
-            "i", 0,
-            (uint32_t)(SDL_GetTicks() / 1000));
+        dbus::Message call = dbus_message_new_method_call(
+            service.c_str(), object_path.c_str(),
+            "com.canonical.dbusmenu", "Event");
+
+        dbus::Iterator args(call.get(), dbus::iter::append);
+        args.append(DBUS_TYPE_INT32, id);
+        args.append(DBUS_TYPE_STRING, "clicked");
+        { auto var = args.open(DBUS_TYPE_VARIANT, "i");
+          var.append(DBUS_TYPE_INT32, 0);
+          args.close(var); }
+        args.append(DBUS_TYPE_UINT32, SDL_GetTicks() / 1000);
+
+        dbus::Message reply = call_and_wait(call.get());
     };
 
-    auto properties = item[1];
-    if (auto label = properties["label"].as_string()) {
-        std::println("{}label: {}", indent(1), *label);
-    }
-    if (!properties["enabled"].as_boolean().value_or(true)) {
-        std::println("{}disabled", indent(1));
-    }
-    if (!properties["visible"].as_boolean().value_or(true)) {
-        std::println("{}hidden", indent(1));
-    }
-    if (properties["type"].as_string().value_or("") == "separator") {
-        std::println("{}separator", indent(1));
-    }
-    if (auto children_display = properties["children-display"].as_string()) {
-        std::println("{}children-display: {}", indent(1), *children_display);
+    for (auto property : item[1]) {
+        auto key = property[0].get_string().value();
+        if      (key == "label")   menu_item.label     = property[1].get_string().value();
+        else if (key == "enabled") menu_item.enabled   = property[1].get<bool>().value();
+        else if (key == "visible") menu_item.visible   = property[1].get<bool>().value();
+        else if (key == "type")    menu_item.separator = property[1].get_string().value() == "separator";
     }
 
-    menu_item.label = properties["label"].as_string().value_or("");
-    menu_item.enabled = properties["enabled"].as_boolean().value_or(true);
-    menu_item.visible = properties["visible"].as_boolean().value_or(true);
-    menu_item.separator = properties["type"].as_string().value_or("") == "separator";
-
-    auto children = item[2];
-    {
-        dbus::ValueIterator value;
-        for (int i = 0; (value = children[i]); ++i) {
-            menu_item.children.emplace_back(parse_menu_item(service, object_path, value, depth + 2));
-        }
+    for (auto child : item[2]) {
+        menu_item.children.emplace_back(parse_menu_item(service, object_path, child, depth + 2));
     }
 
     return menu_item;
@@ -99,12 +104,35 @@ auto parse_menu_item(const char* service, const char* object_path, dbus::ValueIt
 static
 auto load_menu(const char* service, const char* object_path) -> MenuItem
 {
-    auto layout = dbus::call(g_bus, service, object_path, "com.canonical.dbusmenu", "GetLayout", "iias", int32_t(0), int32_t(-1), 0);
+    dbus::Message call = dbus_message_new_method_call(
+        service, object_path,
+        "com.canonical.dbusmenu", "GetLayout");
 
-    auto revision = dbus::ValueIterator(layout)[0].as_unsigned().value_or(12345678);
+    dbus::Iterator args(call.get(), dbus::iter::append);
+    args.append(DBUS_TYPE_INT32, 0);
+    args.append(DBUS_TYPE_INT32, -1);
+    args.close(args.open(DBUS_TYPE_ARRAY, "s"));
+
+    dbus::Message reply = call_and_wait(call.get());
+
+    dbus::Iterator iter(reply.get(), dbus::iter::read);
+
+    auto revision = iter.get<uint32_t>().value_or(12345678);
     std::println("    revision: {}", revision);
 
-    return parse_menu_item(service, object_path, dbus::ValueIterator(layout)[1], 2);
+    return parse_menu_item(service, object_path, ++iter, 2);
+}
+
+static
+auto get_property(const char* service, const char* object_path, const char* interface, const char* name) -> dbus::Message
+{
+    std::println("Getting property for {} - {}", service, object_path);
+    std::println("  interface: {} member: {}", interface, name);
+    dbus::Message call = dbus_message_new_method_call(service, object_path, "org.freedesktop.DBus.Properties", "Get");
+    dbus::Iterator args(call.get(), dbus::iter::append);
+    args.append(DBUS_TYPE_STRING, interface);
+    args.append(DBUS_TYPE_STRING, name);
+    return call_and_wait(call.get());
 }
 
 static
@@ -120,13 +148,15 @@ auto load(const char* service, const char* object_path) -> Item
     item.unique = std::format("{}{}", service, object_path);
 
     item.on_click = [service = std::string(service), object_path = std::string(object_path)] {
-        dbus::call(g_bus, service.c_str(), object_path.c_str(), "org.kde.StatusNotifierItem", "Activate", "ii",
-            int32_t(0),
-            int32_t(0));
+        dbus::Message call = dbus_message_new_method_call(service.c_str(), object_path.c_str(),
+            "org.kde.StatusNotifierItem", "Activate");
+        dbus::Iterator args(call.get(), dbus::iter::append);
+        args.append(DBUS_TYPE_INT32, 0);
+        args.append(DBUS_TYPE_INT32, 0);
+        call_and_wait(call.get());
     };
 
-    auto title = dbus::ValueIterator(dbus::get_property(g_bus, service, object_path, interface, "Title"))[0].as_string();
-    if (title) {
+    if (auto title = dbus::Iterator(get_property(service, object_path, interface, "Title").get(), dbus::iter::read).get_string()) {
         std::println("  Title: {}", *title);
         item.title = *title;
     }
@@ -134,19 +164,22 @@ auto load(const char* service, const char* object_path) -> Item
     {
         // Tooltip
 
-        auto tooltip_res = dbus::get_property(g_bus, service, object_path, interface, "ToolTip");
-        if (auto tooltip = dbus::ValueIterator{tooltip_res}[0]) {
+        auto res = get_property(service, object_path, interface, "ToolTip");
+        if (auto tooltip = dbus::Iterator(res.get(), dbus::iter::read)) {
             if (item.title.empty()) {
-                item.title = tooltip[2].as_string().value();
+                item.title = tooltip[2].get_string().value();
             }
-            std::println("  Tooltip: {}", tooltip[2].as_string().value());
+            std::println("  Tooltip: {}", tooltip[2].get_string().value());
         }
     }
 
     {
-        // Get process information
-        auto res = dbus::call(g_bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetConnectionUnixProcessID", "s", service);
-        auto pid = dbus::ValueIterator{res}[0].as_signed().value_or(-1);
+        dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus", "org.freedesktop.DBus", "GetConnectionUnixProcessID");
+        dbus::Iterator args(call.get(), dbus::iter::append);
+        args.append(DBUS_TYPE_STRING, ":1.1119");
+        dbus::Message reply = call_and_wait(call.get());
+
+        auto pid = dbus::Iterator(reply.get(), dbus::iter::read).get<int>().value_or(-1);
 
         std::println("  PID: {}", pid);
 
@@ -160,35 +193,27 @@ auto load(const char* service, const char* object_path) -> Item
         }
     }
 
-    auto icon_name = dbus::ValueIterator(dbus::get_property(g_bus, service, object_path, interface, "IconName"))[0].as_string();
-    if (icon_name) {
+    if (auto icon_name = dbus::Iterator(get_property(service, object_path, interface, "IconName").get(), dbus::iter::read).get_string()) {
         std::println("  IconName: {}", *icon_name);
         item.icon = load_texture_from_icon_name(g_renderer, icon_name->c_str());
     }
 
-    auto icon_pixmap = dbus::get_property(g_bus, service, object_path, interface, "IconPixmap");
-    if (auto array = dbus::ValueIterator(icon_pixmap)[0]) {
-        dbus::ValueIterator pixmap;
-        for (int i = 0; (pixmap = array[i]); i++) {
-            auto width = pixmap[0].as_signed().value_or(-1);
-            auto height = pixmap[1].as_signed().value_or(-1);
-            std::println("  IconPixmap[{}] = {}x{}", i, width, height);
+    auto icon_pixmap = get_property(service, object_path, interface, "IconPixmap");
+    if (auto pixmaps = dbus::Iterator(icon_pixmap.get(), dbus::iter::read)) {
+        for (auto pixmap : pixmaps) {
+            auto width = pixmap[0].get<int>().value_or(-1);
+            auto height = pixmap[1].get<int>().value_or(-1);
+            std::println("  IconPixmap = {}x{}", width, height);
 
             std::vector<uint8_t> bytes;
-            {
-                dbus::ValueIterator array = pixmap[2];
-                for (int i = 0; i < width * height * 4; ++i) {
-                    uint8_t value = array[i].as_unsigned().value();
-                    // std::println("    [{}] = {}", i, value);
-                    bytes.emplace_back(value);
-                }
+            for (auto byte : pixmap[2]) {
+                bytes.emplace_back(byte.get<uint8_t>().value());
             }
             item.icon = load_texture(g_renderer, width, height, bytes.data());
         }
     }
 
-    auto menu_path = dbus::ValueIterator(dbus::get_property(g_bus, service, object_path, interface, "Menu"))[0].as_string();
-    if (menu_path) {
+    if (auto menu_path = dbus::Iterator(get_property(service, object_path, interface, "Menu").get(), dbus::iter::read).get_string()) {
         std::println("  Menu: {}", *menu_path);
         item.menu = load_menu(service, menu_path->c_str());
     }
@@ -246,6 +271,7 @@ void dump_item(Item& item)
 
 // -----------------------------------------------------------------------------
 
+static
 void draw_menu_item(MenuItem& item)
 {
     if (item.separator) {
@@ -274,6 +300,7 @@ void draw_menu_item(MenuItem& item)
     }
 }
 
+static
 void frame()
 {
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
@@ -286,6 +313,9 @@ void frame()
     };
     bool dont_close = true;
     if (!ImGui::Begin("Tray", &dont_close, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize)) return;
+    if (!dont_close || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        _exit(0);
+    }
 
     for (auto& item : g_items) {
         const float ROW_H     = 32.0f;
@@ -337,39 +367,8 @@ void frame()
 
 // -----------------------------------------------------------------------------
 
-static
-void find_well_known_names()
-{
-    auto res = dbus::call(g_bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames", nullptr);
-    auto list = dbus::ValueIterator{res}[0];
-
-    std::unordered_map<std::string, std::vector<std::string>> names;
-
-    dbus::ValueIterator iname;
-    for (int i = 0; (iname = list[i]); ++i) {
-        auto name = iname.as_string().value();
-
-        auto owned_res = dbus::call(g_bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner", "s", name.c_str());
-        auto owner = dbus::ValueIterator{owned_res}[0].as_string().value();
-
-        if (owner == name) continue;
-
-        names[owner].emplace_back(name);
-    }
-
-    for (auto[owner, names] : names) {
-        std::println("{}", owner);
-        for (auto& name : names) {
-            std::println("  {}", name);
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
-
 int main()
 {
-
     SDL_Init(SDL_INIT_VIDEO);
 
     auto window = SDL_CreateWindow("Tray", 600, 800, SDL_WINDOW_RESIZABLE);
@@ -379,25 +378,15 @@ int main()
     ImGui_ImplSDL3_InitForSDLRenderer(window, g_renderer);
     ImGui_ImplSDLRenderer3_Init(g_renderer);
 
-    // ----
+    dbus_error_init(&g_err);
+    g_bus = dbus_bus_get(DBUS_BUS_SESSION, &g_err);
+    check_error();
 
-    check(sd_bus_open_user(&g_bus));
-
-    auto msg = dbus::get_property(g_bus,
-        "org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
-        "org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems");
-
-    if (auto items = dbus::ValueIterator(msg)[0]) {
-        dbus::ValueIterator value;
-        for (int i = 0; (value = items[i]); i++) {
-            if (auto item = value.as_string()) {
-                load(*item);
-            }
-        }
+    for (auto item : dbus::Iterator(get_property("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+                                                 "org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems").get(),
+                                    dbus::iter::read)) {
+        load(item.get_string().value());
     }
-
-    std::println("-- FIND NAMES");
-    find_well_known_names();
 
     std::println("-- DUMP");
 

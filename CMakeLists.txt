@@ -20,16 +20,16 @@ target_sources(imgui PRIVATE
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL3       REQUIRED IMPORTED_TARGET sdl3)
-pkg_check_modules(libsystemd REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(gtk        REQUIRED IMPORTED_TARGET gtk+-3.0)
 pkg_check_modules(gdk-pixbuf REQUIRED IMPORTED_TARGET gdk-pixbuf-2.0)
+pkg_check_modules(libdbus    REQUIRED IMPORTED_TARGET dbus-1)
 
 # ------------------------------------------------------------------------------
 
 add_executable(tray-service)
 target_compile_options(tray-service PUBLIC -std=c++26 -freflection)
 target_sources(tray-service PUBLIC src/service.cpp)
-target_link_libraries(tray-service PUBLIC PkgConfig::libsystemd stdc++exp)
+target_link_libraries(tray-service PUBLIC PkgConfig::libdbus stdc++exp)
 
 # ------------------------------------------------------------------------------
 
@@ -38,9 +38,9 @@ target_compile_options(tray PUBLIC -std=c++26 -freflection)
 target_sources(tray PUBLIC src/tray.cpp)
 target_link_libraries(tray PUBLIC
     PkgConfig::SDL3
-    PkgConfig::libsystemd
     PkgConfig::gtk
     PkgConfig::gdk-pixbuf
+    PkgConfig::libdbus
     imgui
     stdc++exp
     )

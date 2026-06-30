@@ -1,142 +1,72 @@
-#include <print>
-#include <stacktrace>
-#include <iostream>
+#include "dbus2.hpp"
+
 #include <flat_set>
-
-#include "dbus.hpp"
-#include "dbus_pack.hpp"
-#include "enums.hpp"
-
-static sd_bus*                    g_bus = nullptr;
-static std::flat_set<std::string> g_items;
-
-static
-int StatusNotifierWatcher_RegisterStatusNotifierItem(sd_bus_message* msg, void* userdata, sd_bus_error* err)
-{
-    std::println("StatusNotifierWatcher.RegisterStatusNotifierItem");
-
-    const char* sender = sd_bus_message_get_sender(msg);
-    std::println("  sender: {}", sender);
-
-    auto args = dbus::unpack_message(msg);
-
-    auto object_path = dbus::ValueIterator(args)[0].as_string();
-    if (!object_path || *object_path == sender) {
-        std::println("  arg was service, replacing with /StatusNotifierItem");
-        object_path = "/StatusNotifierItem";
-    }
-    std::println("  object_path: {}", *object_path);
-
-    g_items.emplace(std::format("{}{}", sender, *object_path));
-
-    return sd_bus_reply_method_return(msg, "");
-}
-
-static
-int StatusNotifierWatcher_RegisterStatusNotifierHost(sd_bus_message* msg, void* userdata, sd_bus_error* err)
-{
-    std::println("StatusNotifierWatcher.RegisterStatusNotifierHost");
-    return sd_bus_reply_method_return(msg, "");
-}
-
-static
-int StatusNotifierWatcher_RegisteredStatusNotifierItems(
-    sd_bus* bus, const char* path,
-    const char* iface, const char* prop,
-    sd_bus_message* reply, void* userdata,
-    sd_bus_error* err)
-{
-    std::println("StatusNotifierWatcher.RegisteredStatusNotifierItems");
-    dbus::Array values;
-    for (auto& item : g_items) {
-        std::println("ITEM: {}", item);
-        values.elements.emplace_back(dbus::String(item));
-    }
-    dbus::append(reply, "as", values);
-    return 0;
-}
-
-static
-int StatusNotifierWatcher_IsStatusNotifierHostRegistered(
-    sd_bus* bus, const char* path,
-    const char* iface, const char* prop,
-    sd_bus_message* reply, void* userdata,
-    sd_bus_error* err)
-{
-    std::println("StatusNotifierWatcher.IsStatusNotifierHostRegistered");
-    return sd_bus_message_append(reply, "b", true);
-}
-
-static
-int StatusNotifierWatcher_ProtocolVersion(
-    sd_bus* bus, const char* path,
-    const char* iface, const char* prop,
-    sd_bus_message* reply, void* userdata,
-    sd_bus_error* err)
-{
-    std::println("StatusNotifierWatcher.ProtocolVersion");
-    return sd_bus_message_append(reply, "i", (int32_t)0);
-}
-
-static
-const sd_bus_vtable StatusNotifierWatcher_VTable[] = {
-    SD_BUS_VTABLE_START(0),
-
-    // Methods
-    SD_BUS_METHOD(
-        "RegisterStatusNotifierItem", "s", "",
-        StatusNotifierWatcher_RegisterStatusNotifierItem,
-        SD_BUS_VTABLE_UNPRIVILEGED),
-
-    SD_BUS_METHOD(
-        "RegisterStatusNotifierHost", "s", "",
-        StatusNotifierWatcher_RegisterStatusNotifierHost,
-        SD_BUS_VTABLE_UNPRIVILEGED),
-
-    // Properties
-    SD_BUS_PROPERTY(
-        "RegisteredStatusNotifierItems", "as",
-        StatusNotifierWatcher_RegisteredStatusNotifierItems,
-        0,
-        SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-
-    SD_BUS_PROPERTY(
-        "IsStatusNotifierHostRegistered", "b",
-        StatusNotifierWatcher_IsStatusNotifierHostRegistered,
-        0,
-        SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-
-    SD_BUS_PROPERTY(
-        "ProtocolVersion", "i",
-        StatusNotifierWatcher_ProtocolVersion,
-        0,
-        SD_BUS_VTABLE_PROPERTY_CONST),
-
-    SD_BUS_SIGNAL("StatusNotifierItemRegistered",   "s", 0),
-    SD_BUS_SIGNAL("StatusNotifierItemUnregistered", "s", 0),
-    SD_BUS_SIGNAL("StatusNotifierHostRegistered",   "",  0),
-
-    SD_BUS_VTABLE_END
-};
 
 int main()
 {
-    check(sd_bus_open_user(&g_bus));
+    DBusError err;
+    dbus_error_init(&err);
+    defer { dbus_error_free(&err); };
 
-    check(sd_bus_add_object_vtable(g_bus,
-        nullptr,
-        "/StatusNotifierWatcher",
-        "org.kde.StatusNotifierWatcher",
-        StatusNotifierWatcher_VTable,
-        nullptr));
+    std::flat_set<std::string> items;
 
-    check(sd_bus_request_name(g_bus, "org.kde.StatusNotifierWatcher", 0));
+    auto* conn = dbus_bus_get(DBUS_BUS_SESSION, &err);
+    defer { dbus_connection_unref(conn); };
+
+    dbus::VTable watcher(conn, "/StatusNotifierWatcher");
+    watcher.interfaces["org.kde.StatusNotifierWatcher"]["RegisterStatusNotifierItem"] =
+        [&](DBusConnection*, DBusMessage* msg) {
+            auto sender = dbus_message_get_sender(msg);
+            std::println("  sender: {}", sender);
+
+            dbus::Iterator args(msg, dbus::iter::read);
+
+            auto object_path = std::string(args.get_string().value_or(""));
+            if (object_path.empty() || object_path == sender) {
+                std::println("  arg was service, replacing with /StatusNotifierItem");
+                object_path = "/StatusNotifierItem";
+            }
+            std::println("  object_path: {}", object_path);
+
+            items.emplace(std::format("{}{}", sender, object_path));
+
+            dbus::Message reply = dbus_message_new_method_return(msg);
+            dbus_connection_send(conn, reply.get(), nullptr);
+            return DBUS_HANDLER_RESULT_HANDLED;
+        };
+    watcher.interfaces["org.kde.StatusNotifierWatcher"]["RegisterStatusNotifierHost"] =
+        [](DBusConnection* conn, DBusMessage* msg) {
+            dbus::Message reply = dbus_message_new_method_return(msg);
+            dbus_connection_send(conn, reply.get(), nullptr);
+            return DBUS_HANDLER_RESULT_HANDLED;
+        };
+    watcher.properties["org.kde.StatusNotifierWatcher"]["RegisteredStatusNotifierItems"] = {
+        "as",  [&](DBusConnection*, dbus::Iterator& out) {
+            auto arr = out.open(DBUS_TYPE_ARRAY, "s");
+            for (auto& item : items) {
+                arr.append(DBUS_TYPE_STRING, item.c_str());
+            }
+            out.close(arr);
+        },
+    };
+    watcher.properties["org.kde.StatusNotifierWatcher"]["IsStatusNotifierHostRegistered"] = {
+        "b", [](DBusConnection* conn, dbus::Iterator& out) {
+            out.append(DBUS_TYPE_BOOLEAN, true);
+        }
+    };
+    watcher.properties["org.kde.StatusNotifierWatcher"]["ProtocolVersion"] = {
+        "i", [](DBusConnection* conn, dbus::Iterator& out) {
+            out.append(DBUS_TYPE_INT32, 0);
+        }
+    };
+
+    auto res = dbus_bus_request_name(conn, "org.kde.StatusNotifierWatcher", DBUS_NAME_FLAG_DO_NOT_QUEUE, &err);
+    if (dbus_error_is_set(&err) || res == DBUS_REQUEST_NAME_REPLY_EXISTS) {
+        std::println("ERROR - Failed to acquire org.kde.StatusNotifierWatcher name, exiting");
+        return EXIT_FAILURE;
+    }
 
     for (;;) {
-        auto res = sd_bus_process(g_bus, nullptr);
-        if (res > 0) continue;
-        check(res);
-
-        check(sd_bus_wait(g_bus, UINT64_MAX));
+        dbus_connection_read_write_dispatch(conn, -1);
     }
 }
