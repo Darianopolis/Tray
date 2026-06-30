@@ -290,17 +290,21 @@ void draw_menu_item(MenuItem& item)
         return;
     }
 
-    if (ImGui::Selectable(item.label.c_str()) && item.on_click) {
-        item.on_click();
-    }
 
-    if (item.children.empty()) return;
-
-    if (ImGui::BeginPopupContextItem(nullptr, ImGuiPopupFlags_MouseButtonLeft)) {
-        for (auto& child : item.children) {
-            draw_menu_item(child);
+    if (item.children.empty()) {
+        if (ImGui::MenuItem(item.label.c_str(), nullptr, false, item.enabled)) {
+            item.on_click();
         }
-        ImGui::EndPopup();
+    } else {
+        if (ImGui::BeginMenu(item.label.c_str(), item.enabled)) {
+            for (auto& child : item.children) {
+                draw_menu_item(child);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::IsItemClicked()) {
+            item.on_click();
+        }
     }
 }
 
@@ -375,7 +379,7 @@ int main()
 {
     SDL_Init(SDL_INIT_VIDEO);
 
-    auto window = SDL_CreateWindow("Tray", 300, 400, SDL_WINDOW_RESIZABLE);
+    auto window = SDL_CreateWindow("Tray", 800, 400, SDL_WINDOW_RESIZABLE);
     g_renderer = SDL_CreateRenderer(window, nullptr);
 
     ImGui::CreateContext();
