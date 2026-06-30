@@ -23,7 +23,7 @@ struct IconTexture
 };
 
 static
-auto load_texture(SDL_Renderer* renderer, int w, int h, const void* data /* ARGB8888 tightly packed */) -> IconTexture
+auto load_texture(SDL_Renderer* renderer, int w, int h, const void* data, SDL_PixelFormat format, int pitch = 0) -> IconTexture
 {
     IconTexture tex = {};
 
@@ -33,21 +33,18 @@ auto load_texture(SDL_Renderer* renderer, int w, int h, const void* data /* ARGB
     tex.data.resize(w * h * 4);
     std::memcpy(tex.data.data(), data, tex.data.size());
 
-    // std::println("#### LOADING TEXTURE ({}, {})", w, h);
+    if (!pitch) pitch = w * 4;
 
-    auto surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_ARGB8888, tex.data.data(), w * 4);
+    auto surface = SDL_CreateSurfaceFrom(w, h, format, tex.data.data(), pitch);
     defer { SDL_DestroySurface(surface); };
 
-    // std::println("####   surface: {}", (void*)surface);
-
     tex.tex.reset(SDL_CreateTextureFromSurface(renderer, surface));
-
-    // std::println("####   texture: {}", (void*)tex.tex.get());
 
     return tex;
 }
 
-static GdkPixbuf* ensure_size(GdkPixbuf* pb, int size)
+static
+auto ensure_size(GdkPixbuf* pb, int size) -> GdkPixbuf*
 {
     if (gdk_pixbuf_get_width(pb) == size &&
         gdk_pixbuf_get_height(pb) == size)
@@ -56,9 +53,8 @@ static GdkPixbuf* ensure_size(GdkPixbuf* pb, int size)
     return gdk_pixbuf_scale_simple(pb, size, size, GDK_INTERP_BILINEAR);
 }
 
-// Try to load a raster or SVG file from an explicit path, scaled to `size`.
-// Returns nullptr (no throw) if the file doesn't exist or can't be decoded.
-static GdkPixbuf* try_load_file(const std::filesystem::path& path, int size)
+static
+auto try_load_file(const std::filesystem::path& path, int size) -> GdkPixbuf*
 {
     if (!std::filesystem::exists(path))
         return nullptr;
@@ -67,7 +63,6 @@ static GdkPixbuf* try_load_file(const std::filesystem::path& path, int size)
     GdkPixbuf* pb  = nullptr;
 
     if (path.extension() == ".svg") {
-        // Ask librsvg to rasterise directly at the target size.
         pb = gdk_pixbuf_new_from_file_at_size(path.c_str(), size, size, &err);
     } else {
         pb = gdk_pixbuf_new_from_file(path.c_str(), &err);
@@ -78,23 +73,19 @@ static GdkPixbuf* try_load_file(const std::filesystem::path& path, int size)
 
     GdkPixbuf* scaled = ensure_size(pb, size);
     g_object_unref(pb);
-    return scaled; // may be nullptr if scaling fails
+    return scaled;
 }
 
-// Candidate extensions tried in preference order (SVG first for quality).
-static constexpr std::array kExts = { ".svg", ".png", ".xpm" };
+static constexpr std::array icon_exts = { ".svg", ".png", ".xpm" };
 
-// Search `root` for `<name>.<ext>`.  If `recurse`, walk subdirectories too
-// (used for theme trees where icons live under e.g. 48x48/apps/).
-static std::optional<std::filesystem::path> find_icon_file(const std::filesystem::path& root,
-                                               const std::string& name,
-                                               bool recurse)
+static
+auto find_icon_file(const std::filesystem::path& root, const std::string& name, bool recurse) -> std::optional<std::filesystem::path>
 {
     if (!std::filesystem::is_directory(root))
         return std::nullopt;
 
     std::unordered_set<std::filesystem::path> needles;
-    for (const char* ext : kExts) {
+    for (const char* ext : icon_exts) {
         needles.emplace(name + ext);
     }
 
@@ -122,42 +113,16 @@ static std::optional<std::filesystem::path> find_icon_file(const std::filesystem
 static
 auto load_texture_from_pixbuf(SDL_Renderer* renderer, GdkPixbuf* pixbuf) -> IconTexture
 {
-    // std::println("load_texture_from_pixbuf");
-    // std::println("  Pixbuf: {}", (void*)pixbuf);
-
     if (!gdk_pixbuf_get_has_alpha(pixbuf)) {
-        // std::println("  adding alpha channel: {}", (void*)pixbuf);
         pixbuf = gdk_pixbuf_add_alpha(pixbuf, FALSE, 0, 0, 0);
     }
 
-    const int width    = gdk_pixbuf_get_width(pixbuf);
-    const int height   = gdk_pixbuf_get_height(pixbuf);
-    const int rowstride= gdk_pixbuf_get_rowstride(pixbuf);  // bytes per row (may have padding)
-    const uint8_t* src = gdk_pixbuf_get_pixels(pixbuf);
-
-    // std::println("  size: {}, {}", width, height);
-    // std::println("  stride: {}", rowstride);
-
-    std::vector<uint8_t> out(static_cast<size_t>(width * height * 4));
-    uint8_t* dst = out.data();
-
-    for (int y = 0; y < height; ++y) {
-        const uint8_t* row = src + y * rowstride;
-        for (int x = 0; x < width; ++x) {
-            const uint8_t r = row[x * 4 + 0];
-            const uint8_t g = row[x * 4 + 1];
-            const uint8_t b = row[x * 4 + 2];
-            const uint8_t a = row[x * 4 + 3];
-
-            // Write ARGB8888 as bytes: B G R A
-            dst[(y * width + x) * 4 + 0] = b;
-            dst[(y * width + x) * 4 + 1] = g;
-            dst[(y * width + x) * 4 + 2] = r;
-            dst[(y * width + x) * 4 + 3] = a;
-        }
-    }
-
-    return load_texture(renderer, width, height, dst);
+    return load_texture(renderer,
+        gdk_pixbuf_get_width(pixbuf),
+        gdk_pixbuf_get_height(pixbuf),
+        gdk_pixbuf_get_pixels(pixbuf),
+        SDL_PIXELFORMAT_ABGR8888,
+        gdk_pixbuf_get_rowstride(pixbuf));
 }
 
 static
@@ -179,15 +144,12 @@ auto load_texture_from_icon_name(SDL_Renderer* renderer, const char* name) -> Ic
         return load_texture_from_pixbuf(renderer, pixbuf);
     } else {
         const std::vector<std::pair<std::filesystem::path, bool>> search_dirs = {
-            // { "/usr/share", true },
-            // { std::filesystem::path(g_get_home_dir()) / ".local/share", true },
-
-            // { std::filesystem::path(g_get_home_dir()) / ".local/share/spotify-launcher/install/usr/share/spotify/icons", false },
+            { std::filesystem::path(g_get_home_dir()) / ".local/share/spotify-launcher/install/usr/share/spotify/icons", false },
 
             { "/usr/share/pixmaps",                                           true },
-            { "/usr/share/icons/hicolor",                                     true  },
-            { std::filesystem::path(g_get_home_dir()) / ".local/share/icons", true  },
-            { "/usr/share/icons",                                             true  },
+            { "/usr/share/icons/hicolor",                                     true },
+            { std::filesystem::path(g_get_home_dir()) / ".local/share/icons", true },
+            { "/usr/share/icons",                                             true },
         };
 
         for (auto& [dir, recurse] : search_dirs) {

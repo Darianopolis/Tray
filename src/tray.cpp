@@ -126,8 +126,6 @@ auto load_menu(const char* service, const char* object_path) -> MenuItem
 static
 auto get_property(const char* service, const char* object_path, const char* interface, const char* name) -> dbus::Message
 {
-    std::println("Getting property for {} - {}", service, object_path);
-    std::println("  interface: {} member: {}", interface, name);
     dbus::Message call = dbus_message_new_method_call(service, object_path, "org.freedesktop.DBus.Properties", "Get");
     dbus::Iterator args(call.get(), dbus::iter::append);
     args.append(DBUS_TYPE_STRING, interface);
@@ -156,27 +154,30 @@ auto load(const char* service, const char* object_path) -> Item
         call_and_wait(call.get());
     };
 
-    if (auto title = dbus::Iterator(get_property(service, object_path, interface, "Title").get(), dbus::iter::read).get_string()) {
-        std::println("  Title: {}", *title);
-        item.title = *title;
-    }
-
     {
         // Tooltip
 
         auto res = get_property(service, object_path, interface, "ToolTip");
         if (auto tooltip = dbus::Iterator(res.get(), dbus::iter::read)) {
-            if (item.title.empty()) {
-                item.title = tooltip[2].get_string().value();
+            item.title = tooltip[2].get_string().value();
+            if (!item.title.empty()) {
+                std::println("  Tooltip: {}", item.title);
             }
-            std::println("  Tooltip: {}", tooltip[2].get_string().value());
+        }
+    }
+
+    auto title = dbus::Iterator(get_property(service, object_path, interface, "Title").get(), dbus::iter::read).get_string().value_or("");
+    if (!title.empty()) {
+        std::println("  Title: {}", title);
+        if (item.title.empty()) {
+            item.title = title;
         }
     }
 
     {
         dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus", "org.freedesktop.DBus", "GetConnectionUnixProcessID");
         dbus::Iterator args(call.get(), dbus::iter::append);
-        args.append(DBUS_TYPE_STRING, ":1.1119");
+        args.append(DBUS_TYPE_STRING, service);
         dbus::Message reply = call_and_wait(call.get());
 
         auto pid = dbus::Iterator(reply.get(), dbus::iter::read).get<int>().value_or(-1);
@@ -193,9 +194,10 @@ auto load(const char* service, const char* object_path) -> Item
         }
     }
 
-    if (auto icon_name = dbus::Iterator(get_property(service, object_path, interface, "IconName").get(), dbus::iter::read).get_string()) {
-        std::println("  IconName: {}", *icon_name);
-        item.icon = load_texture_from_icon_name(g_renderer, icon_name->c_str());
+    auto icon_name = dbus::Iterator(get_property(service, object_path, interface, "IconName").get(), dbus::iter::read).get_string().value_or("");
+    if (!icon_name.empty()) {
+        std::println("  IconName: {}", icon_name);
+        item.icon = load_texture_from_icon_name(g_renderer, icon_name.c_str());
     }
 
     auto icon_pixmap = get_property(service, object_path, interface, "IconPixmap");
@@ -206,10 +208,12 @@ auto load(const char* service, const char* object_path) -> Item
             std::println("  IconPixmap = {}x{}", width, height);
 
             std::vector<uint8_t> bytes;
+            bytes.reserve(width * height * 4);
             for (auto byte : pixmap[2]) {
                 bytes.emplace_back(byte.get<uint8_t>().value());
             }
-            item.icon = load_texture(g_renderer, width, height, bytes.data());
+
+            item.icon = load_texture(g_renderer, width, height, bytes.data(), SDL_PIXELFORMAT_BGRA8888);
         }
     }
 
@@ -371,7 +375,7 @@ int main()
 {
     SDL_Init(SDL_INIT_VIDEO);
 
-    auto window = SDL_CreateWindow("Tray", 600, 800, SDL_WINDOW_RESIZABLE);
+    auto window = SDL_CreateWindow("Tray", 300, 400, SDL_WINDOW_RESIZABLE);
     g_renderer = SDL_CreateRenderer(window, nullptr);
 
     ImGui::CreateContext();

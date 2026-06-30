@@ -365,7 +365,7 @@ public:
             : connection(conn)
             , path(path)
         {
-            dbus_connection_register_object_path(conn, "/StatusNotifierWatcher", ptr_to(DBusObjectPathVTable {
+            dbus_connection_register_object_path(conn, path, ptr_to(DBusObjectPathVTable {
                 .message_function = [](DBusConnection* conn, DBusMessage* msg, void* data) -> DBusHandlerResult {
                     auto* vtable = static_cast<VTable*>(data);
 
@@ -388,10 +388,8 @@ public:
                 [this](DBusConnection* conn, DBusMessage* msg) -> DBusHandlerResult {
                     Iterator args(msg, iter::read);
 
-                    std::println("Signature {}", dbus_message_get_signature(msg));
-
                     auto interface_name = (args++).get_string().value_or("");
-                    auto member_name = (args++).get_string().value_or("");
+                    auto member_name    = (args++).get_string().value_or("");
 
                     auto interface = properties.find(interface_name);
                     if (interface != properties.end()) {
