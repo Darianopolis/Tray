@@ -308,6 +308,8 @@ void draw_menu_item(MenuItem& item)
     }
 }
 
+static bool g_any_popup_open;
+
 static
 void frame()
 {
@@ -321,9 +323,12 @@ void frame()
     };
     bool dont_close = true;
     if (!ImGui::Begin("Tray", &dont_close, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize)) return;
-    if (!dont_close || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+
+    if (!dont_close || (ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_any_popup_open)) {
         _exit(0);
     }
+
+    bool space_pressed = ImGui::IsKeyPressed(ImGuiKey_Space);
 
     for (auto& item : g_items) {
         const float ROW_H     = 32.0f;
@@ -341,8 +346,9 @@ void frame()
         ImVec2 row_origin = ImGui::GetCursorScreenPos();
 
         if (ImGui::Selectable(id.c_str(), false, {}, {avail.x, 32}) && item.on_click) {
-            item.on_click();
+            if (!space_pressed) item.on_click();
         }
+        bool item_focused = ImGui::IsItemFocused();
 
         if (item.icon.tex) {
             ImVec2 icon_pos(row_origin.x, row_origin.y);
@@ -365,6 +371,9 @@ void frame()
         }
 
         if (item.menu) {
+            if (item_focused && space_pressed) {
+                ImGui::OpenPopup(id.c_str());
+            }
             if (ImGui::BeginPopupContextItem(id.c_str())) {
                 draw_menu_item(*item.menu);
                 ImGui::EndPopup();
@@ -385,6 +394,8 @@ int main()
     ImGui::CreateContext();
     ImGui_ImplSDL3_InitForSDLRenderer(window, g_renderer);
     ImGui_ImplSDLRenderer3_Init(g_renderer);
+
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
     dbus_error_init(&g_err);
     g_bus = dbus_bus_get(DBUS_BUS_SESSION, &g_err);
@@ -429,6 +440,8 @@ int main()
         ImGui::NewFrame();
 
         frame();
+
+        g_any_popup_open = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup);
 
         ImGui::Render();
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_renderer);
