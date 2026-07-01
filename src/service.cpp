@@ -5,8 +5,9 @@
 static
 auto check_service(DBusConnection* conn, const char* service) -> bool
 {
-    dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus", "org.freedesktop.DBus", "GetConnectionUnixProcessID");
-    dbus::Iterator args(call.get(), dbus::iter::append);
+    dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus",
+                                                      "org.freedesktop.DBus", "GetConnectionUnixProcessID");
+    dbus::AppendIterator args(call.get());
     args.append(DBUS_TYPE_STRING, service);
 
     DBusError err;
@@ -14,20 +15,16 @@ auto check_service(DBusConnection* conn, const char* service) -> bool
     defer { dbus_error_free(&err); };
     dbus::Message reply = dbus_connection_send_with_reply_and_block(conn, call.get(), -1, &err);
 
-    bool active = dbus::Iterator(reply.get(), dbus::iter::read).get<int>().has_value();
+    bool active = dbus::Iterator(reply.get()).get<int>().has_value();
     if (!active) std::println("Service {} is no longer alive!", service);
     return active;
 }
 
 int main()
 {
-    DBusError err;
-    dbus_error_init(&err);
-    defer { dbus_error_free(&err); };
-
     std::flat_map<std::string, std::string> items;
 
-    auto* conn = dbus_bus_get(DBUS_BUS_SESSION, &err);
+    auto* conn = dbus::connect(DBUS_BUS_SESSION);
     defer { dbus_connection_unref(conn); };
 
     dbus::VTable watcher(conn, "/StatusNotifierWatcher");
@@ -36,7 +33,7 @@ int main()
             auto sender = dbus_message_get_sender(msg);
             std::println("  sender: {}", sender);
 
-            dbus::Iterator args(msg, dbus::iter::read);
+            dbus::Iterator args(msg);
 
             auto object_path = std::string(args.get_string().value_or(""));
             if (object_path.empty() || object_path == sender) {
@@ -48,17 +45,17 @@ int main()
             items[sender] = object_path;
 
             dbus::Message reply = dbus_message_new_method_return(msg);
-            dbus_connection_send(conn, reply.get(), nullptr);
+            dbus::send(conn, reply.get());
             return DBUS_HANDLER_RESULT_HANDLED;
         };
     watcher.interfaces["org.kde.StatusNotifierWatcher"]["RegisterStatusNotifierHost"] =
         [](DBusConnection* conn, DBusMessage* msg) {
             dbus::Message reply = dbus_message_new_method_return(msg);
-            dbus_connection_send(conn, reply.get(), nullptr);
+            dbus::send(conn, reply.get());
             return DBUS_HANDLER_RESULT_HANDLED;
         };
     watcher.properties["org.kde.StatusNotifierWatcher"]["RegisteredStatusNotifierItems"] = {
-        "as",  [&](DBusConnection*, dbus::Iterator& out) {
+        "as",  [&](DBusConnection*, dbus::AppendIterator& out) {
             auto arr = out.open(DBUS_TYPE_ARRAY, "s");
             std::erase_if(items, [&](const std::pair<std::string, std::string>& item) {
                 return !check_service(conn, item.first.c_str());
@@ -70,18 +67,18 @@ int main()
         },
     };
     watcher.properties["org.kde.StatusNotifierWatcher"]["IsStatusNotifierHostRegistered"] = {
-        "b", [](DBusConnection* conn, dbus::Iterator& out) {
+        "b", [](DBusConnection* conn, dbus::AppendIterator& out) {
             out.append(DBUS_TYPE_BOOLEAN, true);
         }
     };
     watcher.properties["org.kde.StatusNotifierWatcher"]["ProtocolVersion"] = {
-        "i", [](DBusConnection* conn, dbus::Iterator& out) {
+        "i", [](DBusConnection* conn, dbus::AppendIterator& out) {
             out.append(DBUS_TYPE_INT32, 0);
         }
     };
 
-    auto res = dbus_bus_request_name(conn, "org.kde.StatusNotifierWatcher", DBUS_NAME_FLAG_DO_NOT_QUEUE, &err);
-    if (dbus_error_is_set(&err) || res == DBUS_REQUEST_NAME_REPLY_EXISTS) {
+    if (dbus::request_name(conn, "org.kde.StatusNotifierWatcher", DBUS_NAME_FLAG_DO_NOT_QUEUE)
+            != DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER) {
         std::println("ERROR - Failed to acquire org.kde.StatusNotifierWatcher name, exiting");
         return EXIT_FAILURE;
     }

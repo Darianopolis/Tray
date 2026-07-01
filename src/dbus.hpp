@@ -12,6 +12,10 @@
 
 namespace dbus
 {
+// -----------------------------------------------------------------------------
+//      Debug
+// -----------------------------------------------------------------------------
+
     static
     const char* type_to_string(int type)
     {
@@ -36,6 +40,10 @@ namespace dbus
         }
         return "N/A";
     }
+
+// -----------------------------------------------------------------------------
+//      Message
+// -----------------------------------------------------------------------------
 
     struct Message
     {
@@ -89,14 +97,92 @@ namespace dbus
         }
     };
 
-    namespace iter
-    {
-        struct Read {};
-        constexpr Read read;
+// -----------------------------------------------------------------------------
+//      Append Iterator
+// -----------------------------------------------------------------------------
 
-        struct Append {};
-        constexpr Append append;
+    struct AppendIterator
+    {
+        mutable DBusMessageIter iter;
+
+        // Init
+
+private:
+        AppendIterator(const DBusMessageIter& _iter)
+            : iter(_iter)
+        {}
+
+public:
+        AppendIterator()
+        {
+            dbus_message_iter_init_closed(&iter);
+        }
+
+        AppendIterator(DBusMessage* message)
+        {
+            dbus_message_iter_init_append(message, &iter);
+        }
+
+        // Append
+
+        template<typename T>
+        void append(int type, const T& value)
+        {
+            if constexpr (std::is_arithmetic_v<T>) {
+
+                switch (type) {
+
+#define TRAY_DBUS_APPEND_TYPE(Type) \
+    { \
+        Type storage = value; \
+        if (!dbus_message_iter_append_basic(&iter, type, &storage)) { \
+            assert(false && "Failed to append basic arithmetic type");\
+        } \
     }
+
+                    break;case DBUS_TYPE_BYTE:    TRAY_DBUS_APPEND_TYPE(uint8_t)
+                    break;case DBUS_TYPE_BOOLEAN: TRAY_DBUS_APPEND_TYPE(int)
+                    break;case DBUS_TYPE_INT16:   TRAY_DBUS_APPEND_TYPE(int16_t)
+                    break;case DBUS_TYPE_UINT16:  TRAY_DBUS_APPEND_TYPE(uint16_t)
+                    break;case DBUS_TYPE_INT32:   TRAY_DBUS_APPEND_TYPE(int32_t)
+                    break;case DBUS_TYPE_UINT32:  TRAY_DBUS_APPEND_TYPE(uint32_t)
+                    break;case DBUS_TYPE_INT64:   TRAY_DBUS_APPEND_TYPE(int64_t)
+                    break;case DBUS_TYPE_UINT64:  TRAY_DBUS_APPEND_TYPE(uint64_t)
+                    break;case DBUS_TYPE_DOUBLE:  TRAY_DBUS_APPEND_TYPE(double)
+                }
+
+                assert(false && "Type is not arithmetic");
+
+            } else if constexpr (std::is_convertible_v<T, const char*>) {
+                const char* string = value;
+                if (!dbus_message_iter_append_basic(&iter, type, &string)) {
+                    assert(false && "Failed to append basic string type");
+                }
+            } else {
+                assert(false && "Unsupported T for append");
+            }
+        }
+
+        auto open(int type, const char* signature) -> AppendIterator
+        {
+            DBusMessageIter sub;
+            if (!dbus_message_iter_open_container(&iter, type, signature, &sub)) {
+                assert(false && "Failed to open container");
+            }
+            return {sub};
+        }
+
+        auto close(const AppendIterator& sub)
+        {
+            if (!dbus_message_iter_close_container(&iter, &sub.iter)) {
+                assert(false && "Failed to close container");
+            }
+        }
+    };
+
+// -----------------------------------------------------------------------------
+//      Read Iterator
+// -----------------------------------------------------------------------------
 
     struct Iterator
     {
@@ -118,80 +204,13 @@ public:
             dbus_message_iter_init_closed(&iter);
         }
 
-        Iterator(DBusMessage* message, iter::Read)
+        Iterator(DBusMessage* message)
         {
             if (message) {
                 dbus_message_iter_init(message, &iter);
             } else {
                 dbus_message_iter_init_closed(&iter);
                 closed = true;
-            }
-        }
-
-        Iterator(DBusMessage* message, iter::Append)
-        {
-            if (message) {
-                dbus_message_iter_init_append(message, &iter);
-            } else {
-                dbus_message_iter_init_closed(&iter);
-                closed = true;
-            }
-        }
-
-
-        // Append
-
-        template<typename T>
-        void append(int type, const T& value)
-        {
-            if constexpr (std::is_arithmetic_v<T>) {
-
-    #define TRAY_DBUS_APPEND_TYPE(Type) \
-                { \
-                    Type storage = value; \
-                    if (!dbus_message_iter_append_basic(&iter, type, &storage)) { \
-                        assert(false && "Failed to append basic arithmetic type");\
-                    } \
-                }
-
-                switch (type) {
-
-                    break;case DBUS_TYPE_BYTE:    TRAY_DBUS_APPEND_TYPE(uint8_t)
-                    break;case DBUS_TYPE_BOOLEAN: TRAY_DBUS_APPEND_TYPE(int)
-                    break;case DBUS_TYPE_INT16:   TRAY_DBUS_APPEND_TYPE(int16_t)
-                    break;case DBUS_TYPE_UINT16:  TRAY_DBUS_APPEND_TYPE(uint16_t)
-                    break;case DBUS_TYPE_INT32:   TRAY_DBUS_APPEND_TYPE(int32_t)
-                    break;case DBUS_TYPE_UINT32:  TRAY_DBUS_APPEND_TYPE(uint32_t)
-                    break;case DBUS_TYPE_INT64:   TRAY_DBUS_APPEND_TYPE(int64_t)
-                    break;case DBUS_TYPE_UINT64:  TRAY_DBUS_APPEND_TYPE(uint64_t)
-                    break;case DBUS_TYPE_DOUBLE:  TRAY_DBUS_APPEND_TYPE(double)
-                    break;default:
-                        assert(false && "Type is not arithmetic");
-                }
-
-            } else if constexpr (std::is_convertible_v<T, const char*>) {
-                const char* string = value;
-                if (!dbus_message_iter_append_basic(&iter, type, &string)) {
-                    assert(false && "Failed to append basic string type");
-                }
-            } else {
-                assert(false && "Unsupported T for append");
-            }
-        }
-
-        auto open(int type, const char* signature) -> Iterator
-        {
-            DBusMessageIter sub;
-            if (!dbus_message_iter_open_container(&iter, type, signature, &sub)) {
-                assert(false && "Failed to open container");
-            }
-            return {sub, true};
-        }
-
-        auto close(const Iterator& sub)
-        {
-            if (!dbus_message_iter_close_container(&iter, &sub.iter)) {
-                assert(false && "Failed to close container");
             }
         }
 
@@ -266,15 +285,15 @@ public:
         {
             if (closed) return std::nullopt;
 
-    #define TRAY_DBUS_GET_TYPE(Type) \
-        { \
-            Type value; \
-            dbus_message_iter_get_basic(&concrete, &value); \
-            return value; \
-        }
-
             DBusMessageIter concrete = unwrap_variants();
             switch (dbus_message_iter_get_arg_type(&concrete)) {
+
+#define TRAY_DBUS_GET_TYPE(Type) \
+    { \
+        Type value; \
+        dbus_message_iter_get_basic(&concrete, &value); \
+        return value; \
+    }
 
                 break;case DBUS_TYPE_BYTE:    TRAY_DBUS_GET_TYPE(uint8_t)
                 break;case DBUS_TYPE_BOOLEAN: TRAY_DBUS_GET_TYPE(int)
@@ -286,6 +305,7 @@ public:
                 break;case DBUS_TYPE_UINT64:  TRAY_DBUS_GET_TYPE(uint64_t)
                 break;case DBUS_TYPE_DOUBLE:  TRAY_DBUS_GET_TYPE(double)
             }
+
             return std::nullopt;
         }
 
@@ -342,10 +362,59 @@ public:
         }
     };
 
+// -----------------------------------------------------------------------------
+//      Helpers
+// -----------------------------------------------------------------------------
+
+    inline
+    auto connect(DBusBusType type) -> DBusConnection*
+    {
+        DBusError err;
+        dbus_error_init(&err);
+        defer {  dbus_error_free(&err); };
+        auto conn = dbus_bus_get(type, &err);
+        if (dbus_error_is_set(&err)) {
+            std::println("DBUS ERROR : {} - {}", err.name, err.message);
+        }
+        return conn;
+    }
+
+    inline
+    auto request_name(DBusConnection* conn, const char* name, unsigned int flags) -> int
+    {
+        DBusError err;
+        dbus_error_init(&err);
+        defer {  dbus_error_free(&err); };
+        return dbus_bus_request_name(conn, name, flags, &err);
+    }
+
+    inline
+    auto send_with_reply(DBusConnection* conn, DBusMessage* msg) -> Message
+    {
+        DBusError err;
+        dbus_error_init(&err);
+        defer {  dbus_error_free(&err); };
+        Message result = dbus_connection_send_with_reply_and_block(conn, msg, -1, &err);
+        if (dbus_error_is_set(&err)) {
+            std::println("DBUS ERROR : {} - {}", err.name, err.message);
+        }
+        return result;
+    }
+
+    inline
+    auto send(DBusConnection* conn, DBusMessage* msg) -> bool
+    {
+        return dbus_connection_send(conn, msg, nullptr);
+    }
+
+// -----------------------------------------------------------------------------
+//      VTable
+// -----------------------------------------------------------------------------
+
     struct Property
     {
         std::string signature;
-        std::function<void(DBusConnection*, Iterator&)> handler;
+        std::function<void(DBusConnection*, AppendIterator&)> handler;
     };
 
     struct VTable
@@ -386,7 +455,7 @@ public:
 
             interfaces["org.freedesktop.DBus.Properties"]["Get"] =
                 [this](DBusConnection* conn, DBusMessage* msg) -> DBusHandlerResult {
-                    Iterator args(msg, iter::read);
+                    Iterator args(msg);
 
                     auto interface_name = (args++).get_string().value_or("");
                     auto member_name    = (args++).get_string().value_or("");
@@ -397,11 +466,11 @@ public:
                         if (member != interface->second.end()) {
                             auto& property = member->second;
                             Message reply = dbus_message_new_method_return(msg);
-                            Iterator out(reply.get(), iter::append);
+                            AppendIterator out(reply.get());
                             auto var = out.open(DBUS_TYPE_VARIANT, property.signature.c_str());
                             property.handler(conn, var);
                             out.close(var);
-                            dbus_connection_send(conn, reply.get(), nullptr);
+                            send(conn, reply.get());
                             return DBUS_HANDLER_RESULT_HANDLED;
                         }
                     }

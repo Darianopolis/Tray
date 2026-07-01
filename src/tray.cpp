@@ -37,29 +37,9 @@ struct Item
     std::function<void()> on_click;
 };
 
-DBusError         g_err;
 DBusConnection*   g_bus;
 std::vector<Item> g_items;
 SDL_Renderer*     g_renderer;
-
-// -----------------------------------------------------------------------------
-
-static
-void check_error()
-{
-    if (dbus_error_is_set(&g_err)) {
-        std::println("DBUS ERROR : {} - {}", g_err.name, g_err.message);
-        dbus_error_free(&g_err);
-    }
-}
-
-static
-auto call_and_wait(DBusMessage* message) -> dbus::Message
-{
-    dbus::Message reply = dbus_connection_send_with_reply_and_block(g_bus, message, -1, &g_err);
-    check_error();
-    return reply;
-}
 
 // -----------------------------------------------------------------------------
 
@@ -71,11 +51,9 @@ auto parse_menu_item(const char* service, const char* object_path, dbus::Iterato
     int32_t id = item[0].get<int>().value_or(-1);
 
     menu_item.on_click = [id, service = std::string(service), object_path = std::string(object_path)] {
-        dbus::Message call = dbus_message_new_method_call(
-            service.c_str(), object_path.c_str(),
-            "com.canonical.dbusmenu", "Event");
+        dbus::Message call = dbus_message_new_method_call(service.c_str(), object_path.c_str(), "com.canonical.dbusmenu", "Event");
 
-        dbus::Iterator args(call.get(), dbus::iter::append);
+        dbus::AppendIterator args(call.get());
         args.append(DBUS_TYPE_INT32, id);
         args.append(DBUS_TYPE_STRING, "clicked");
         { auto var = args.open(DBUS_TYPE_VARIANT, "i");
@@ -83,7 +61,7 @@ auto parse_menu_item(const char* service, const char* object_path, dbus::Iterato
           args.close(var); }
         args.append(DBUS_TYPE_UINT32, SDL_GetTicks() / 1000);
 
-        dbus::Message reply = call_and_wait(call.get());
+        dbus::send(g_bus, call.get());
     };
 
     for (auto property : item[1]) {
@@ -104,18 +82,15 @@ auto parse_menu_item(const char* service, const char* object_path, dbus::Iterato
 static
 auto load_menu(const char* service, const char* object_path) -> MenuItem
 {
-    dbus::Message call = dbus_message_new_method_call(
-        service, object_path,
-        "com.canonical.dbusmenu", "GetLayout");
-
-    dbus::Iterator args(call.get(), dbus::iter::append);
+    dbus::Message call = dbus_message_new_method_call(service, object_path, "com.canonical.dbusmenu", "GetLayout");
+    dbus::AppendIterator args(call.get());
     args.append(DBUS_TYPE_INT32, 0);
     args.append(DBUS_TYPE_INT32, -1);
     args.close(args.open(DBUS_TYPE_ARRAY, "s"));
 
-    dbus::Message reply = call_and_wait(call.get());
+    dbus::Message reply = dbus::send_with_reply(g_bus, call.get());
 
-    dbus::Iterator iter(reply.get(), dbus::iter::read);
+    dbus::Iterator iter(reply.get());
 
     auto revision = iter.get<uint32_t>().value_or(12345678);
     std::println("    revision: {}", revision);
@@ -127,10 +102,10 @@ static
 auto get_property(const char* service, const char* object_path, const char* interface, const char* name) -> dbus::Message
 {
     dbus::Message call = dbus_message_new_method_call(service, object_path, "org.freedesktop.DBus.Properties", "Get");
-    dbus::Iterator args(call.get(), dbus::iter::append);
+    dbus::AppendIterator args(call.get());
     args.append(DBUS_TYPE_STRING, interface);
     args.append(DBUS_TYPE_STRING, name);
-    return call_and_wait(call.get());
+    return dbus::send_with_reply(g_bus, call.get());
 }
 
 static
@@ -147,18 +122,18 @@ auto load(const char* service, const char* object_path) -> Item
 
     item.on_click = [service = std::string(service), object_path = std::string(object_path)] {
         dbus::Message call = dbus_message_new_method_call(service.c_str(), object_path.c_str(),
-            "org.kde.StatusNotifierItem", "Activate");
-        dbus::Iterator args(call.get(), dbus::iter::append);
+                                                          "org.kde.StatusNotifierItem", "Activate");
+        dbus::AppendIterator args(call.get());
         args.append(DBUS_TYPE_INT32, 0);
         args.append(DBUS_TYPE_INT32, 0);
-        call_and_wait(call.get());
+        dbus::send(g_bus, call.get());
     };
 
     {
         // Tooltip
 
         auto res = get_property(service, object_path, interface, "ToolTip");
-        if (auto tooltip = dbus::Iterator(res.get(), dbus::iter::read)) {
+        if (auto tooltip = dbus::Iterator(res.get())) {
             item.title = tooltip[2].get_string().value();
             if (!item.title.empty()) {
                 std::println("  Tooltip: {}", item.title);
@@ -166,7 +141,7 @@ auto load(const char* service, const char* object_path) -> Item
         }
     }
 
-    auto title = dbus::Iterator(get_property(service, object_path, interface, "Title").get(), dbus::iter::read).get_string().value_or("");
+    auto title = dbus::Iterator(get_property(service, object_path, interface, "Title").get()).get_string().value_or("");
     if (!title.empty()) {
         std::println("  Title: {}", title);
         if (item.title.empty()) {
@@ -175,12 +150,13 @@ auto load(const char* service, const char* object_path) -> Item
     }
 
     {
-        dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus", "org.freedesktop.DBus", "GetConnectionUnixProcessID");
-        dbus::Iterator args(call.get(), dbus::iter::append);
+        dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus",
+                                                          "org.freedesktop.DBus", "GetConnectionUnixProcessID");
+        dbus::AppendIterator args(call.get());
         args.append(DBUS_TYPE_STRING, service);
-        dbus::Message reply = call_and_wait(call.get());
+        dbus::Message reply = dbus::send_with_reply(g_bus, call.get());
 
-        auto pid = dbus::Iterator(reply.get(), dbus::iter::read).get<int>().value_or(-1);
+        auto pid = dbus::Iterator(reply.get()).get<int>().value_or(-1);
 
         std::println("  PID: {}", pid);
 
@@ -194,14 +170,14 @@ auto load(const char* service, const char* object_path) -> Item
         }
     }
 
-    auto icon_name = dbus::Iterator(get_property(service, object_path, interface, "IconName").get(), dbus::iter::read).get_string().value_or("");
+    auto icon_name = dbus::Iterator(get_property(service, object_path, interface, "IconName").get()).get_string().value_or("");
     if (!icon_name.empty()) {
         std::println("  IconName: {}", icon_name);
         item.icon = load_texture_from_icon_name(g_renderer, icon_name.c_str());
     }
 
     auto icon_pixmap = get_property(service, object_path, interface, "IconPixmap");
-    if (auto pixmaps = dbus::Iterator(icon_pixmap.get(), dbus::iter::read)) {
+    if (auto pixmaps = dbus::Iterator(icon_pixmap.get())) {
         for (auto pixmap : pixmaps) {
             auto width = pixmap[0].get<int>().value_or(-1);
             auto height = pixmap[1].get<int>().value_or(-1);
@@ -217,7 +193,7 @@ auto load(const char* service, const char* object_path) -> Item
         }
     }
 
-    if (auto menu_path = dbus::Iterator(get_property(service, object_path, interface, "Menu").get(), dbus::iter::read).get_string()) {
+    if (auto menu_path = dbus::Iterator(get_property(service, object_path, interface, "Menu").get()).get_string()) {
         std::println("  Menu: {}", *menu_path);
         item.menu = load_menu(service, menu_path->c_str());
     }
@@ -397,13 +373,11 @@ int main()
 
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    dbus_error_init(&g_err);
-    g_bus = dbus_bus_get(DBUS_BUS_SESSION, &g_err);
-    check_error();
+    g_bus = dbus::connect(DBUS_BUS_SESSION);
+    defer { dbus_connection_unref(g_bus); };
 
     for (auto item : dbus::Iterator(get_property("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
-                                                 "org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems").get(),
-                                    dbus::iter::read)) {
+                                                 "org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems").get())) {
         load(item.get_string().value());
     }
 
