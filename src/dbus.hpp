@@ -132,18 +132,16 @@ public:
         template<typename T>
         void append(int type, const T& value)
         {
-            if constexpr (std::is_arithmetic_v<T>) {
-
-                switch (type) {
 
 #define TRAY_DBUS_APPEND_TYPE(Type) \
     { \
         Type storage = value; \
         if (!dbus_message_iter_append_basic(&iter, type, &storage)) { \
-            assert(false && "Failed to append basic arithmetic type");\
+            assert(false && "DBUS ASSERT : Failed to append type");\
         } \
     }
-
+            if constexpr (std::is_arithmetic_v<T>) {
+                switch (type) {
                     break;case DBUS_TYPE_BYTE:    TRAY_DBUS_APPEND_TYPE(uint8_t)
                     break;case DBUS_TYPE_BOOLEAN: TRAY_DBUS_APPEND_TYPE(int)
                     break;case DBUS_TYPE_INT16:   TRAY_DBUS_APPEND_TYPE(int16_t)
@@ -153,14 +151,18 @@ public:
                     break;case DBUS_TYPE_INT64:   TRAY_DBUS_APPEND_TYPE(int64_t)
                     break;case DBUS_TYPE_UINT64:  TRAY_DBUS_APPEND_TYPE(uint64_t)
                     break;case DBUS_TYPE_DOUBLE:  TRAY_DBUS_APPEND_TYPE(double)
+                    break;default:
+                        assert(false && "Expected arithmetic D-Bus type");
                 }
-
-                assert(false && "Type is not arithmetic");
 
             } else if constexpr (std::is_convertible_v<T, const char*>) {
                 const char* string = value;
-                if (!dbus_message_iter_append_basic(&iter, type, &string)) {
-                    assert(false && "Failed to append basic string type");
+                switch (type) {
+                    break;case DBUS_TYPE_STRING:      TRAY_DBUS_APPEND_TYPE(const char*)
+                    break;case DBUS_TYPE_OBJECT_PATH: TRAY_DBUS_APPEND_TYPE(const char*)
+                    break;case DBUS_TYPE_SIGNATURE:   TRAY_DBUS_APPEND_TYPE(const char*)
+                    break;default:
+                        assert(false && "Expected string D-Bus type");
                 }
             } else {
                 assert(false && "Unsupported T for append");
@@ -274,8 +276,8 @@ public:
             DBusMessageIter concrete = unwrap_variants();
             switch (dbus_message_iter_get_arg_type(&concrete)) {
                 break;case DBUS_TYPE_STRING:
-                    case DBUS_TYPE_OBJECT_PATH:
-                    case DBUS_TYPE_SIGNATURE:
+                      case DBUS_TYPE_OBJECT_PATH:
+                      case DBUS_TYPE_SIGNATURE:
                     const char* value;
                     dbus_message_iter_get_basic(&concrete, &value);
                     return value;
