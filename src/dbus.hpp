@@ -60,6 +60,10 @@ namespace dbus
             }
         }
 
+        Message()
+            : message(nullptr)
+        {}
+
         Message(DBusMessage* _message)
             : message(_message)
         {
@@ -475,9 +479,36 @@ public:
                         }
                     }
 
-                    std::println("ERROR : Property unhandled");
-                    std::println("  interface: {} ", interface_name);
-                    std::println("     member: {} ", member_name);
+                    std::println("ERROR : Properties.Get({}, {}) unhandled", interface_name, member_name);
+                    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+                };
+
+            interfaces["org.freedesktop.DBus.Properties"]["GetAll"] =
+                [this](DBusConnection* conn, DBusMessage* msg) -> DBusHandlerResult {
+
+                    auto interface_name = Iterator(msg).get_string().value_or("");
+
+                    auto interface = properties.find(interface_name);
+                    if (interface != properties.end()) {
+                        Message reply = dbus_message_new_method_return(msg);
+                        AppendIterator out(reply.get());
+                        auto arr = out.open(DBUS_TYPE_ARRAY, "{sv}");
+                        for (auto[name, property] : interface->second) {
+                            auto entry = arr.open(DBUS_TYPE_DICT_ENTRY, nullptr);
+                            entry.append(DBUS_TYPE_STRING, std::string(name).c_str());
+                            {
+                                auto var = entry.open(DBUS_TYPE_VARIANT, property.signature.c_str());
+                                property.handler(conn, var);
+                                entry.close(var);
+                            }
+                            arr.close(entry);
+                        }
+                        out.close(arr);
+                        send(conn, reply.get());
+                        return DBUS_HANDLER_RESULT_HANDLED;
+                    }
+
+                    std::println("ERROR : Properties.GetAll({}) unhandled", interface_name);
                     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
                 };
         }

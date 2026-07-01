@@ -130,7 +130,12 @@ auto load_texture_from_icon_name(SDL_Renderer* renderer, const char* name) -> Ic
 {
     gtk_init_check(nullptr, nullptr);
 
-    std::println("Loading icon: \"{}\"", name);
+    // std::println("    Loading icon: \"{}\"", name);
+    // auto start = std::chrono::steady_clock::now();
+    // defer {
+    //     auto end = std::chrono::steady_clock::now();
+    //     std::println("      completed in {}", fmt_time(end - start));
+    // };
 
     int requested_size = 32;
 
