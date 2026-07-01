@@ -79,21 +79,25 @@ auto parse_menu_item(const char* service, const char* object_path, dbus::Iterato
     return menu_item;
 }
 
+
 static
-auto load_menu(const char* service, const char* object_path) -> MenuItem
+auto load_menu(const char* service, const char* object_path, dbus::Iterator iter) -> MenuItem
 {
-    dbus::Message call = dbus_message_new_method_call(service, object_path, "com.canonical.dbusmenu", "GetLayout");
+    auto revision = iter.get<int64_t>().value_or(-1);
+
+    return parse_menu_item(service, object_path, ++iter, 2);
+}
+
+static
+auto load_menu(const char* service, const char* menu_path) -> MenuItem
+{
+    dbus::Message call = dbus_message_new_method_call(service, menu_path, "com.canonical.dbusmenu", "GetLayout");
     dbus::AppendIterator args(call.get());
     args.append(DBUS_TYPE_INT32, 0);
     args.append(DBUS_TYPE_INT32, -1);
     args.close(args.open(DBUS_TYPE_ARRAY, "s"));
 
-    dbus::Message reply = dbus::send_with_reply(g_bus, call.get());
-    dbus::Iterator iter(reply.get());
-
-    auto revision = iter.get<int64_t>().value_or(-1);
-
-    return parse_menu_item(service, object_path, ++iter, 2);
+    return load_menu(service, menu_path, dbus::Iterator(dbus::send_with_reply(g_bus, call.get()).get()));
 }
 
 #define TIME_SCOPE(Message) \
@@ -102,6 +106,8 @@ auto load_menu(const char* service, const char* object_path) -> MenuItem
         auto end = std::chrono::steady_clock::now(); \
         std::println(Message, fmt_time(end - start)); \
     }
+
+bool g_has_menu_path_cache = true;
 
 static
 auto load(const char* service, const char* object_path) -> Item
@@ -120,6 +126,31 @@ auto load(const char* service, const char* object_path) -> Item
         args.append(DBUS_TYPE_INT32, 0);
         dbus::send(g_bus, call.get());
     };
+
+    std::string cached_menu_path;
+    DBusPendingCall* menu_call = nullptr;
+    defer { if (menu_call) dbus_pending_call_unref(menu_call); };
+    if (g_has_menu_path_cache) {
+        cached_menu_path = [&] {
+            dbus::Message call = dbus_message_new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+                                                              "com.darianopolis.TrayService", "GetCachedMenuPath");
+            dbus::AppendIterator args(call.get());
+            args.append(DBUS_TYPE_STRING, service);
+            args.append(DBUS_TYPE_STRING, object_path);
+            dbus::Message reply = dbus::send_with_reply(g_bus, call.get());
+            g_has_menu_path_cache = reply.get();
+            return dbus::Iterator(reply.get()).get_string().value_or("");
+        }();
+
+        if (!cached_menu_path.empty()) {
+            dbus::Message call = dbus_message_new_method_call(service, cached_menu_path.c_str(), "com.canonical.dbusmenu", "GetLayout");
+            dbus::AppendIterator args(call.get());
+            args.append(DBUS_TYPE_INT32, 0);
+            args.append(DBUS_TYPE_INT32, -1);
+            args.close(args.open(DBUS_TYPE_ARRAY, "s"));
+            menu_call = dbus::send_with_reply_future(g_bus, call.get());
+        }
+    }
 
     dbus::Message properties_msg;
     std::unordered_map<std::string, dbus::Iterator> properties;
@@ -188,8 +219,29 @@ auto load(const char* service, const char* object_path) -> Item
     }
 
     if (auto menu_path = properties["Menu"].get_string()) {
-        TIME_SCOPE("  Menu loaded in {}");
-        item.menu = load_menu(service, menu_path->c_str());
+
+        if (*menu_path == cached_menu_path && menu_call) {
+            TIME_SCOPE("  Menu loaded (prefetched) in {}");
+
+            dbus_pending_call_block(menu_call);
+            dbus::Message reply = dbus_pending_call_steal_reply(menu_call);
+            item.menu = load_menu(service, menu_path->c_str(), reply.get());
+        } else {
+            TIME_SCOPE("  Menu loaded (fallback) in {}");
+
+            item.menu = load_menu(service, menu_path->c_str());
+
+            if (g_has_menu_path_cache) {
+                // Update menu path in cache
+
+                dbus::Message call = dbus_message_new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+                                                                  "com.darianopolis.TrayService", "SetCachedMenuPath");
+                dbus::AppendIterator args(call.get());
+                args.append(DBUS_TYPE_STRING, service);
+                args.append(DBUS_TYPE_STRING, menu_path->c_str());
+                dbus::send(g_bus, call.get());
+            }
+        }
     }
 
     return item;

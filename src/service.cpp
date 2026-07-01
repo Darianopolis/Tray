@@ -22,7 +22,12 @@ auto check_service(DBusConnection* conn, const char* service) -> bool
 
 int main()
 {
-    std::flat_map<std::string, std::string> items;
+    struct Item {
+        std::string object_path;
+        std::string menu_path;
+    };
+
+    std::flat_map<std::string, Item> items;
 
     auto* conn = dbus::connect(DBUS_BUS_SESSION);
     defer { dbus_connection_unref(conn); };
@@ -42,7 +47,18 @@ int main()
             }
             std::println("  object_path: {}", object_path);
 
-            items[sender] = object_path;
+            items[sender].object_path = object_path;
+
+            {
+                dbus::Message call = dbus_message_new_method_call(sender, object_path.c_str(),
+                                                                  "org.freedesktop.DBus.Properties", "Get");
+                dbus::AppendIterator args(call.get());
+                args.append(DBUS_TYPE_STRING, "org.kde.StatusNotifierItem");
+                args.append(DBUS_TYPE_STRING, "Menu");
+                auto res = dbus::send_with_reply(conn, call.get());
+                items[sender].menu_path = dbus::Iterator(res.get()).get_string().value_or("");
+                std::println("  menu path: {}", items[sender].menu_path);
+            }
 
             dbus::Message reply = dbus_message_new_method_return(msg);
             dbus::send(conn, reply.get());
@@ -57,11 +73,11 @@ int main()
     watcher.properties["org.kde.StatusNotifierWatcher"]["RegisteredStatusNotifierItems"] = {
         "as",  [&](DBusConnection*, dbus::AppendIterator& out) {
             auto arr = out.open(DBUS_TYPE_ARRAY, "s");
-            std::erase_if(items, [&](const std::pair<std::string, std::string>& item) {
+            std::erase_if(items, [&](const std::pair<std::string, Item>& item) {
                 return !check_service(conn, item.first.c_str());
             });
-            for (auto[service, path] : items) {
-                arr.append(DBUS_TYPE_STRING, std::format("{}{}", service, path).c_str());
+            for (auto[service, item] : items) {
+                arr.append(DBUS_TYPE_STRING, std::format("{}{}", service, item.object_path).c_str());
             }
             out.close(arr);
         },
@@ -74,6 +90,36 @@ int main()
     watcher.properties["org.kde.StatusNotifierWatcher"]["ProtocolVersion"] = {
         "i", [](DBusConnection* conn, dbus::AppendIterator& out) {
             out.append(DBUS_TYPE_INT32, 0);
+        }
+    };
+
+    watcher.interfaces["com.darianopolis.TrayService"]["SetCachedMenuPath"] = {
+        [&](DBusConnection* conn, DBusMessage* msg) {
+            dbus::Iterator args(msg);
+            auto service = (args++).get_string().value();
+            auto menu_path = (args++).get_string().value();
+
+            std::println("Setting cached menu path: {}", menu_path);
+
+            auto item = items.find(service);
+            if (item != items.end()) {
+                item->second.menu_path = menu_path;
+            }
+
+            dbus::Message reply = dbus_message_new_method_return(msg);
+            dbus::send(conn, reply.get());
+            return DBUS_HANDLER_RESULT_HANDLED;
+        }
+    };
+    watcher.interfaces["com.darianopolis.TrayService"]["GetCachedMenuPath"] = {
+        [&](DBusConnection* conn, DBusMessage* msg) {
+            auto service = dbus::Iterator(msg).get_string().value();
+            dbus::Message reply = dbus_message_new_method_return(msg);
+            auto item = items.find(service);
+            dbus::AppendIterator out(reply.get());
+            out.append(DBUS_TYPE_STRING, item != items.end() ? item->second.menu_path.c_str() : "");
+            dbus::send(conn, reply.get());
+            return DBUS_HANDLER_RESULT_HANDLED;
         }
     };
 

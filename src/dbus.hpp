@@ -393,6 +393,20 @@ public:
     }
 
     inline
+    auto send_with_reply_future(DBusConnection* conn, DBusMessage* msg) -> DBusPendingCall*
+    {
+        DBusError err;
+        dbus_error_init(&err);
+        defer {  dbus_error_free(&err); };
+        DBusPendingCall* pending = nullptr;
+        dbus_connection_send_with_reply(conn, msg, &pending, -1);
+        if (dbus_error_is_set(&err)) {
+            std::println("DBUS ERROR : {} - {}", err.name, err.message);
+        }
+        return pending;
+    }
+
+    inline
     auto send_with_reply(DBusConnection* conn, DBusMessage* msg) -> Message
     {
         DBusError err;
