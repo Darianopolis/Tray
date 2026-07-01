@@ -49,17 +49,6 @@ int main()
 
             items[sender].object_path = object_path;
 
-            {
-                dbus::Message call = dbus_message_new_method_call(sender, object_path.c_str(),
-                                                                  "org.freedesktop.DBus.Properties", "Get");
-                dbus::AppendIterator args(call.get());
-                args.append(DBUS_TYPE_STRING, "org.kde.StatusNotifierItem");
-                args.append(DBUS_TYPE_STRING, "Menu");
-                auto res = dbus::send_with_reply(conn, call.get());
-                items[sender].menu_path = dbus::Iterator(res.get()).get_string().value_or("");
-                std::println("  menu path: {}", items[sender].menu_path);
-            }
-
             dbus::Message reply = dbus_message_new_method_return(msg);
             dbus::send(conn, reply.get());
             return DBUS_HANDLER_RESULT_HANDLED;
