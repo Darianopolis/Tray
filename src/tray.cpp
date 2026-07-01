@@ -51,14 +51,16 @@ auto parse_menu_item(const char* service, const char* object_path, dbus::Iterato
     int32_t id = item[0].get<int>().value_or(-1);
 
     menu_item.on_click = [id, service = std::string(service), object_path = std::string(object_path)] {
-        dbus::Message call = dbus_message_new_method_call(service.c_str(), object_path.c_str(), "com.canonical.dbusmenu", "Event");
+        dbus::Message call = dbus::new_method_call(service.c_str(), object_path.c_str(), "com.canonical.dbusmenu", "Event");
 
         dbus::AppendIterator args(call.get());
         args.append(DBUS_TYPE_INT32, id);
         args.append(DBUS_TYPE_STRING, "clicked");
-        { auto var = args.open(DBUS_TYPE_VARIANT, "i");
-          var.append(DBUS_TYPE_INT32, 0);
-          args.close(var); }
+        {
+            auto var = args.open(DBUS_TYPE_VARIANT, "i");
+            var.append(DBUS_TYPE_INT32, 0);
+            args.close(var);
+        }
         args.append(DBUS_TYPE_UINT32, SDL_GetTicks() / 1000);
 
         dbus::send(g_bus, call.get());
@@ -91,7 +93,7 @@ auto load_menu(const char* service, const char* object_path, dbus::Iterator iter
 static
 auto load_menu(const char* service, const char* menu_path) -> MenuItem
 {
-    dbus::Message call = dbus_message_new_method_call(service, menu_path, "com.canonical.dbusmenu", "GetLayout");
+    dbus::Message call = dbus::new_method_call(service, menu_path, "com.canonical.dbusmenu", "GetLayout");
     dbus::AppendIterator args(call.get());
     args.append(DBUS_TYPE_INT32, 0);
     args.append(DBUS_TYPE_INT32, -1);
@@ -119,8 +121,8 @@ auto load(const char* service, const char* object_path) -> Item
     item.unique = std::format("{}{}", service, object_path);
 
     item.on_click = [service = std::string(service), object_path = std::string(object_path)] {
-        dbus::Message call = dbus_message_new_method_call(service.c_str(), object_path.c_str(),
-                                                          "org.kde.StatusNotifierItem", "Activate");
+        dbus::Message call = dbus::new_method_call(service.c_str(), object_path.c_str(),
+                                                   "org.kde.StatusNotifierItem", "Activate");
         dbus::AppendIterator args(call.get());
         args.append(DBUS_TYPE_INT32, 0);
         args.append(DBUS_TYPE_INT32, 0);
@@ -132,8 +134,8 @@ auto load(const char* service, const char* object_path) -> Item
     defer { if (menu_call) dbus_pending_call_unref(menu_call); };
     if (g_has_menu_path_cache) {
         cached_menu_path = [&] {
-            dbus::Message call = dbus_message_new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
-                                                              "com.darianopolis.TrayService", "GetCachedMenuPath");
+            dbus::Message call = dbus::new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+                                                       "com.darianopolis.TrayService", "GetCachedMenuPath");
             dbus::AppendIterator args(call.get());
             args.append(DBUS_TYPE_STRING, service);
             args.append(DBUS_TYPE_STRING, object_path);
@@ -143,7 +145,7 @@ auto load(const char* service, const char* object_path) -> Item
         }();
 
         if (!cached_menu_path.empty()) {
-            dbus::Message call = dbus_message_new_method_call(service, cached_menu_path.c_str(), "com.canonical.dbusmenu", "GetLayout");
+            dbus::Message call = dbus::new_method_call(service, cached_menu_path.c_str(), "com.canonical.dbusmenu", "GetLayout");
             dbus::AppendIterator args(call.get());
             args.append(DBUS_TYPE_INT32, 0);
             args.append(DBUS_TYPE_INT32, -1);
@@ -157,8 +159,8 @@ auto load(const char* service, const char* object_path) -> Item
     {
         TIME_SCOPE("  Properties queried in in {}");
 
-        dbus::Message call = dbus_message_new_method_call(service, object_path,
-                                                          "org.freedesktop.DBus.Properties", "GetAll");
+        dbus::Message call = dbus::new_method_call(service, object_path,
+                                                   "org.freedesktop.DBus.Properties", "GetAll");
         dbus::AppendIterator args(call.get());
         args.append(DBUS_TYPE_STRING, interface);
         properties_msg = dbus::send_with_reply(g_bus, call.get());
@@ -180,8 +182,8 @@ auto load(const char* service, const char* object_path) -> Item
 
         // Use process name as title
 
-        dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus",
-                                                          "org.freedesktop.DBus", "GetConnectionUnixProcessID");
+        dbus::Message call = dbus::new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus",
+                                                   "org.freedesktop.DBus", "GetConnectionUnixProcessID");
         dbus::AppendIterator args(call.get());
         args.append(DBUS_TYPE_STRING, service);
         dbus::Message reply = dbus::send_with_reply(g_bus, call.get());
@@ -234,8 +236,8 @@ auto load(const char* service, const char* object_path) -> Item
             if (g_has_menu_path_cache) {
                 // Update menu path in cache
 
-                dbus::Message call = dbus_message_new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
-                                                                  "com.darianopolis.TrayService", "SetCachedMenuPath");
+                dbus::Message call = dbus::new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+                                                           "com.darianopolis.TrayService", "SetCachedMenuPath");
                 dbus::AppendIterator args(call.get());
                 args.append(DBUS_TYPE_STRING, service);
                 args.append(DBUS_TYPE_STRING, menu_path->c_str());
@@ -429,8 +431,8 @@ int main()
     defer { dbus_connection_unref(g_bus); };
 
     {
-        dbus::Message call = dbus_message_new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
-                                                          "org.freedesktop.DBus.Properties", "Get");
+        dbus::Message call = dbus::new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+                                                   "org.freedesktop.DBus.Properties", "Get");
         dbus::AppendIterator args(call.get());
         args.append(DBUS_TYPE_STRING, "org.kde.StatusNotifierWatcher");
         args.append(DBUS_TYPE_STRING, "RegisteredStatusNotifierItems");

@@ -133,34 +133,34 @@ public:
         void append(int type, const T& value)
         {
 
-#define TRAY_DBUS_APPEND_TYPE(Type) \
+#define APPEND_BASIC_TYPE(Type) \
     { \
         Type storage = value; \
         if (!dbus_message_iter_append_basic(&iter, type, &storage)) { \
             assert(false && "DBUS ASSERT : Failed to append type");\
         } \
     }
+
             if constexpr (std::is_arithmetic_v<T>) {
                 switch (type) {
-                    break;case DBUS_TYPE_BYTE:    TRAY_DBUS_APPEND_TYPE(uint8_t)
-                    break;case DBUS_TYPE_BOOLEAN: TRAY_DBUS_APPEND_TYPE(int)
-                    break;case DBUS_TYPE_INT16:   TRAY_DBUS_APPEND_TYPE(int16_t)
-                    break;case DBUS_TYPE_UINT16:  TRAY_DBUS_APPEND_TYPE(uint16_t)
-                    break;case DBUS_TYPE_INT32:   TRAY_DBUS_APPEND_TYPE(int32_t)
-                    break;case DBUS_TYPE_UINT32:  TRAY_DBUS_APPEND_TYPE(uint32_t)
-                    break;case DBUS_TYPE_INT64:   TRAY_DBUS_APPEND_TYPE(int64_t)
-                    break;case DBUS_TYPE_UINT64:  TRAY_DBUS_APPEND_TYPE(uint64_t)
-                    break;case DBUS_TYPE_DOUBLE:  TRAY_DBUS_APPEND_TYPE(double)
+                    break;case DBUS_TYPE_BYTE:    APPEND_BASIC_TYPE(uint8_t)
+                    break;case DBUS_TYPE_BOOLEAN: APPEND_BASIC_TYPE(int)
+                    break;case DBUS_TYPE_INT16:   APPEND_BASIC_TYPE(int16_t)
+                    break;case DBUS_TYPE_UINT16:  APPEND_BASIC_TYPE(uint16_t)
+                    break;case DBUS_TYPE_INT32:   APPEND_BASIC_TYPE(int32_t)
+                    break;case DBUS_TYPE_UINT32:  APPEND_BASIC_TYPE(uint32_t)
+                    break;case DBUS_TYPE_INT64:   APPEND_BASIC_TYPE(int64_t)
+                    break;case DBUS_TYPE_UINT64:  APPEND_BASIC_TYPE(uint64_t)
+                    break;case DBUS_TYPE_DOUBLE:  APPEND_BASIC_TYPE(double)
                     break;default:
                         assert(false && "Expected arithmetic D-Bus type");
                 }
-
             } else if constexpr (std::is_convertible_v<T, const char*>) {
                 const char* string = value;
                 switch (type) {
-                    break;case DBUS_TYPE_STRING:      TRAY_DBUS_APPEND_TYPE(const char*)
-                    break;case DBUS_TYPE_OBJECT_PATH: TRAY_DBUS_APPEND_TYPE(const char*)
-                    break;case DBUS_TYPE_SIGNATURE:   TRAY_DBUS_APPEND_TYPE(const char*)
+                    break;case DBUS_TYPE_STRING:      APPEND_BASIC_TYPE(const char*)
+                    break;case DBUS_TYPE_OBJECT_PATH: APPEND_BASIC_TYPE(const char*)
+                    break;case DBUS_TYPE_SIGNATURE:   APPEND_BASIC_TYPE(const char*)
                     break;default:
                         assert(false && "Expected string D-Bus type");
                 }
@@ -178,7 +178,7 @@ public:
             return {sub};
         }
 
-        auto close(const AppendIterator& sub)
+        void close(const AppendIterator& sub)
         {
             if (!dbus_message_iter_close_container(&iter, &sub.iter)) {
                 assert(false && "Failed to close container");
@@ -198,9 +198,9 @@ public:
         // Init
 
 private:
-        Iterator(const DBusMessageIter& _iter, bool _at_end = false)
+        Iterator(const DBusMessageIter& _iter, bool _closed = false)
             : iter(_iter)
-            , closed(_at_end)
+            , closed(_closed)
         {}
 
 public:
@@ -291,25 +291,24 @@ public:
         {
             if (closed) return std::nullopt;
 
-            DBusMessageIter concrete = unwrap_variants();
-            switch (dbus_message_iter_get_arg_type(&concrete)) {
-
-#define TRAY_DBUS_GET_TYPE(Type) \
+#define GET_BASIC_TYPE(Type) \
     { \
         Type value; \
         dbus_message_iter_get_basic(&concrete, &value); \
         return value; \
     }
 
-                break;case DBUS_TYPE_BYTE:    TRAY_DBUS_GET_TYPE(uint8_t)
-                break;case DBUS_TYPE_BOOLEAN: TRAY_DBUS_GET_TYPE(int)
-                break;case DBUS_TYPE_INT16:   TRAY_DBUS_GET_TYPE(int16_t)
-                break;case DBUS_TYPE_UINT16:  TRAY_DBUS_GET_TYPE(uint16_t)
-                break;case DBUS_TYPE_INT32:   TRAY_DBUS_GET_TYPE(int32_t)
-                break;case DBUS_TYPE_UINT32:  TRAY_DBUS_GET_TYPE(uint32_t)
-                break;case DBUS_TYPE_INT64:   TRAY_DBUS_GET_TYPE(int64_t)
-                break;case DBUS_TYPE_UINT64:  TRAY_DBUS_GET_TYPE(uint64_t)
-                break;case DBUS_TYPE_DOUBLE:  TRAY_DBUS_GET_TYPE(double)
+            DBusMessageIter concrete = unwrap_variants();
+            switch (dbus_message_iter_get_arg_type(&concrete)) {
+                break;case DBUS_TYPE_BYTE:    GET_BASIC_TYPE(uint8_t)
+                break;case DBUS_TYPE_BOOLEAN: GET_BASIC_TYPE(int)
+                break;case DBUS_TYPE_INT16:   GET_BASIC_TYPE(int16_t)
+                break;case DBUS_TYPE_UINT16:  GET_BASIC_TYPE(uint16_t)
+                break;case DBUS_TYPE_INT32:   GET_BASIC_TYPE(int32_t)
+                break;case DBUS_TYPE_UINT32:  GET_BASIC_TYPE(uint32_t)
+                break;case DBUS_TYPE_INT64:   GET_BASIC_TYPE(int64_t)
+                break;case DBUS_TYPE_UINT64:  GET_BASIC_TYPE(uint64_t)
+                break;case DBUS_TYPE_DOUBLE:  GET_BASIC_TYPE(double)
             }
 
             return std::nullopt;
@@ -409,6 +408,18 @@ public:
     }
 
     inline
+    auto new_method_call(const char* bus_name, const char* path, const char* interface, const char* method) -> Message
+    {
+        return dbus_message_new_method_call(bus_name, path, interface, method);
+    }
+
+    inline
+    auto new_method_return(DBusMessage* msg) -> Message
+    {
+        return dbus_message_new_method_return(msg);
+    }
+
+    inline
     auto send_with_reply(DBusConnection* conn, DBusMessage* msg) -> Message
     {
         DBusError err;
@@ -450,11 +461,11 @@ public:
             std::unordered_map<std::string_view,
                 Property>> properties;
 
-        VTable(DBusConnection* conn, const char* path)
-            : connection(conn)
-            , path(path)
+        VTable(DBusConnection* _connection, const char* _path)
+            : connection(_connection)
+            , path(_path)
         {
-            dbus_connection_register_object_path(conn, path, ptr_to(DBusObjectPathVTable {
+            dbus_connection_register_object_path(_connection, _path, ptr_to(DBusObjectPathVTable {
                 .message_function = [](DBusConnection* conn, DBusMessage* msg, void* data) -> DBusHandlerResult {
                     auto* vtable = static_cast<VTable*>(data);
 
@@ -485,7 +496,7 @@ public:
                         auto member = interface->second.find(member_name);
                         if (member != interface->second.end()) {
                             auto& property = member->second;
-                            Message reply = dbus_message_new_method_return(msg);
+                            Message reply = dbus::new_method_return(msg);
                             AppendIterator out(reply.get());
                             auto var = out.open(DBUS_TYPE_VARIANT, property.signature.c_str());
                             property.handler(conn, var);
@@ -506,7 +517,7 @@ public:
 
                     auto interface = properties.find(interface_name);
                     if (interface != properties.end()) {
-                        Message reply = dbus_message_new_method_return(msg);
+                        Message reply = dbus::new_method_return(msg);
                         AppendIterator out(reply.get());
                         auto arr = out.open(DBUS_TYPE_ARRAY, "{sv}");
                         for (auto[name, property] : interface->second) {

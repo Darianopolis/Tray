@@ -5,15 +5,12 @@
 static
 auto check_service(DBusConnection* conn, const char* service) -> bool
 {
-    dbus::Message call = dbus_message_new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus",
-                                                      "org.freedesktop.DBus", "GetConnectionUnixProcessID");
+    dbus::Message call = dbus::new_method_call("org.freedesktop.DBus","/org/freedesktop/DBus",
+                                               "org.freedesktop.DBus", "GetConnectionUnixProcessID");
     dbus::AppendIterator args(call.get());
     args.append(DBUS_TYPE_STRING, service);
 
-    DBusError err;
-    dbus_error_init(&err);
-    defer { dbus_error_free(&err); };
-    dbus::Message reply = dbus_connection_send_with_reply_and_block(conn, call.get(), -1, &err);
+    dbus::Message reply = dbus::send_with_reply(conn, call.get());
 
     bool active = dbus::Iterator(reply.get()).get<int>().has_value();
     if (!active) std::println("Service {} is no longer alive!", service);
@@ -49,13 +46,13 @@ int main()
 
             items[sender].object_path = object_path;
 
-            dbus::Message reply = dbus_message_new_method_return(msg);
+            dbus::Message reply = dbus::new_method_return(msg);
             dbus::send(conn, reply.get());
             return DBUS_HANDLER_RESULT_HANDLED;
         };
     watcher.interfaces["org.kde.StatusNotifierWatcher"]["RegisterStatusNotifierHost"] =
         [](DBusConnection* conn, DBusMessage* msg) {
-            dbus::Message reply = dbus_message_new_method_return(msg);
+            dbus::Message reply = dbus::new_method_return(msg);
             dbus::send(conn, reply.get());
             return DBUS_HANDLER_RESULT_HANDLED;
         };
@@ -95,7 +92,7 @@ int main()
                 item->second.menu_path = menu_path;
             }
 
-            dbus::Message reply = dbus_message_new_method_return(msg);
+            dbus::Message reply = dbus::new_method_return(msg);
             dbus::send(conn, reply.get());
             return DBUS_HANDLER_RESULT_HANDLED;
         }
@@ -103,7 +100,7 @@ int main()
     watcher.interfaces["com.darianopolis.TrayService"]["GetCachedMenuPath"] = {
         [&](DBusConnection* conn, DBusMessage* msg) {
             auto service = dbus::Iterator(msg).get_string().value();
-            dbus::Message reply = dbus_message_new_method_return(msg);
+            dbus::Message reply = dbus::new_method_return(msg);
             auto item = items.find(service);
             dbus::AppendIterator out(reply.get());
             out.append(DBUS_TYPE_STRING, item != items.end() ? item->second.menu_path.c_str() : "");
