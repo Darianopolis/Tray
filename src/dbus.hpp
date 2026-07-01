@@ -12,6 +12,7 @@
 
 namespace dbus
 {
+
 // -----------------------------------------------------------------------------
 //      Debug
 // -----------------------------------------------------------------------------
@@ -42,64 +43,120 @@ namespace dbus
     }
 
 // -----------------------------------------------------------------------------
-//      Message
+//      Containers
 // -----------------------------------------------------------------------------
 
-    struct Message
+    struct Error
     {
-        DBusMessage* message;
+        DBusError data;
 
-        void reset(DBusMessage* _message = nullptr)
+        Error()
         {
-            if (message) {
-                dbus_message_unref(message);
+            dbus_error_init(&data);
+        }
+
+        ~Error()
+        {
+            dbus_error_free(&data);
+        }
+
+        Error(const Error&) = delete;
+
+        explicit operator bool() const noexcept
+        {
+            return dbus_error_is_set(&data);
+        }
+
+        auto name()
+        {
+            return data.name;
+        }
+
+        auto message()
+        {
+            return data.message;
+        }
+    };
+
+    namespace detail
+    {
+        struct Adopt {};
+        struct Reference {};
+    }
+
+    constexpr detail::Adopt     adopt;
+    constexpr detail::Reference reference;
+
+    template<typename T, auto ref, auto unref>
+    struct Ref
+    {
+        T* value;
+
+        void reset(T* _message = nullptr)
+        {
+            if (value) {
+                unref(value);
             }
-            message = _message;
+            value = _message;
             if (_message) {
-                dbus_message_ref(_message);
+                ref(_message);
             }
         }
 
-        Message()
-            : message(nullptr)
+        Ref()
+            : value(nullptr)
         {}
 
-        Message(DBusMessage* _message)
-            : message(_message)
+        Ref(T* _message, detail::Reference)
+            : value(_message)
         {
-            if (message) {
-                dbus_message_ref(message);
+            if (value) {
+                ref(value);
             }
         }
 
-        Message(const Message& other)
-            : message(other.message)
+        Ref(T* _message, detail::Adopt)
+            : value(_message)
         {
-            if (message) {
-                dbus_message_ref(message);
+        }
+
+        Ref(const Ref& other)
+            : value(other.value)
+        {
+            if (value) {
+                ref(value);
             }
         }
 
-        Message& operator=(const Message& other)
+        Ref& operator=(const Ref& other)
         {
-            if (message != other.message) {
-                reset(other.message);
+            if (value != other.value) {
+                reset(other.value);
             }
             return *this;
         }
 
-        auto get() const -> DBusMessage*
+        auto get() const -> T*
         {
-            return message;
+            return value;
         }
 
-        ~Message()
+        ~Ref()
         {
-            if (message) {
-                dbus_message_unref(message);
+            if (value) {
+                unref(value);
             }
         }
+
+        explicit operator bool() const noexcept
+        {
+            return value;
+        }
     };
+
+    using Message     = Ref<DBusMessage,     dbus_message_ref,      dbus_message_unref>;
+    using Connection  = Ref<DBusConnection,  dbus_connection_ref,   dbus_connection_unref>;
+    using PendingCall = Ref<DBusPendingCall, dbus_pending_call_ref, dbus_pending_call_unref>;
 
 // -----------------------------------------------------------------------------
 //      Append Iterator
@@ -372,63 +429,47 @@ public:
 // -----------------------------------------------------------------------------
 
     inline
-    auto connect(DBusBusType type) -> DBusConnection*
+    auto connect(DBusBusType type) -> Connection
     {
-        DBusError err;
-        dbus_error_init(&err);
-        defer {  dbus_error_free(&err); };
-        auto conn = dbus_bus_get(type, &err);
-        if (dbus_error_is_set(&err)) {
-            std::println("DBUS ERROR : {} - {}", err.name, err.message);
-        }
-        return conn;
+        Error err;
+        auto conn = dbus_bus_get(type, &err.data);
+        if (err) std::println("DBUS ERROR : {} - {}", err.name(), err.message());
+        return {conn, adopt};
     }
 
     inline
     auto request_name(DBusConnection* conn, const char* name, unsigned int flags) -> int
     {
-        DBusError err;
-        dbus_error_init(&err);
-        defer {  dbus_error_free(&err); };
-        return dbus_bus_request_name(conn, name, flags, &err);
+        Error err;
+        return dbus_bus_request_name(conn, name, flags, &err.data);
     }
 
     inline
-    auto send_with_reply_future(DBusConnection* conn, DBusMessage* msg) -> DBusPendingCall*
+    auto send_with_reply_future(DBusConnection* conn, DBusMessage* msg) -> PendingCall
     {
-        DBusError err;
-        dbus_error_init(&err);
-        defer {  dbus_error_free(&err); };
         DBusPendingCall* pending = nullptr;
         dbus_connection_send_with_reply(conn, msg, &pending, -1);
-        if (dbus_error_is_set(&err)) {
-            std::println("DBUS ERROR : {} - {}", err.name, err.message);
-        }
-        return pending;
+        return {pending, adopt};
     }
 
     inline
     auto new_method_call(const char* bus_name, const char* path, const char* interface, const char* method) -> Message
     {
-        return dbus_message_new_method_call(bus_name, path, interface, method);
+        return {dbus_message_new_method_call(bus_name, path, interface, method), adopt};
     }
 
     inline
     auto new_method_return(DBusMessage* msg) -> Message
     {
-        return dbus_message_new_method_return(msg);
+        return {dbus_message_new_method_return(msg), adopt};
     }
 
     inline
     auto send_with_reply(DBusConnection* conn, DBusMessage* msg) -> Message
     {
-        DBusError err;
-        dbus_error_init(&err);
-        defer {  dbus_error_free(&err); };
-        Message result = dbus_connection_send_with_reply_and_block(conn, msg, -1, &err);
-        if (dbus_error_is_set(&err)) {
-            std::println("DBUS ERROR : {} - {}", err.name, err.message);
-        }
+        Error err;
+        Message result{dbus_connection_send_with_reply_and_block(conn, msg, -1, &err.data), adopt};
+        if (err) std::println("DBUS ERROR : {} - {}", err.name(), err.message());
         return result;
     }
 

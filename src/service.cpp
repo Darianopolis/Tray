@@ -26,12 +26,11 @@ int main()
 
     std::flat_map<std::string, Item> items;
 
-    auto* conn = dbus::connect(DBUS_BUS_SESSION);
-    defer { dbus_connection_unref(conn); };
+    auto conn = dbus::connect(DBUS_BUS_SESSION);
 
-    dbus::VTable watcher(conn, "/StatusNotifierWatcher");
+    dbus::VTable watcher(conn.get(), "/StatusNotifierWatcher");
     watcher.interfaces["org.kde.StatusNotifierWatcher"]["RegisterStatusNotifierItem"] =
-        [&](DBusConnection*, DBusMessage* msg) {
+        [&](DBusConnection* conn, DBusMessage* msg) {
             auto sender = dbus_message_get_sender(msg);
             std::println("  sender: {}", sender);
 
@@ -57,7 +56,7 @@ int main()
             return DBUS_HANDLER_RESULT_HANDLED;
         };
     watcher.properties["org.kde.StatusNotifierWatcher"]["RegisteredStatusNotifierItems"] = {
-        "as",  [&](DBusConnection*, dbus::AppendIterator& out) {
+        "as",  [&](DBusConnection* conn, dbus::AppendIterator& out) {
             auto arr = out.open(DBUS_TYPE_ARRAY, "s");
             std::erase_if(items, [&](const std::pair<std::string, Item>& item) {
                 return !check_service(conn, item.first.c_str());
@@ -109,13 +108,13 @@ int main()
         }
     };
 
-    if (dbus::request_name(conn, "org.kde.StatusNotifierWatcher", DBUS_NAME_FLAG_DO_NOT_QUEUE)
+    if (dbus::request_name(conn.get(), "org.kde.StatusNotifierWatcher", DBUS_NAME_FLAG_DO_NOT_QUEUE)
             != DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER) {
         std::println("ERROR - Failed to acquire org.kde.StatusNotifierWatcher name, exiting");
         return EXIT_FAILURE;
     }
 
     for (;;) {
-        dbus_connection_read_write_dispatch(conn, -1);
+        dbus_connection_read_write_dispatch(conn.get(), -1);
     }
 }

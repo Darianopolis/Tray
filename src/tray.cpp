@@ -81,7 +81,6 @@ auto parse_menu_item(const char* service, const char* object_path, dbus::Iterato
     return menu_item;
 }
 
-
 static
 auto load_menu(const char* service, const char* object_path, dbus::Iterator iter) -> MenuItem
 {
@@ -130,8 +129,7 @@ auto load(const char* service, const char* object_path) -> Item
     };
 
     std::string cached_menu_path;
-    DBusPendingCall* menu_call = nullptr;
-    defer { if (menu_call) dbus_pending_call_unref(menu_call); };
+    dbus::PendingCall menu_call;
     if (g_has_menu_path_cache) {
         cached_menu_path = [&] {
             dbus::Message call = dbus::new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
@@ -221,14 +219,16 @@ auto load(const char* service, const char* object_path) -> Item
     }
 
     if (auto menu_path = properties["Menu"].get_string()) {
-
         if (*menu_path == cached_menu_path && menu_call) {
             TIME_SCOPE("  Menu loaded (prefetched) in {}");
 
-            dbus_pending_call_block(menu_call);
-            dbus::Message reply = dbus_pending_call_steal_reply(menu_call);
-            item.menu = load_menu(service, menu_path->c_str(), reply.get());
-        } else {
+            dbus_pending_call_block(menu_call.get());
+            if (dbus::Message reply { dbus_pending_call_steal_reply(menu_call.get()), dbus::adopt }) {
+                item.menu = load_menu(service, menu_path->c_str(), reply.get());
+            }
+        }
+
+        if (!item.menu) {
             TIME_SCOPE("  Menu loaded (fallback) in {}");
 
             item.menu = load_menu(service, menu_path->c_str());
@@ -427,8 +427,8 @@ int main()
 
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    g_bus = dbus::connect(DBUS_BUS_SESSION);
-    defer { dbus_connection_unref(g_bus); };
+    auto conn = dbus::connect(DBUS_BUS_SESSION);
+    g_bus = conn.get();
 
     {
         dbus::Message call = dbus::new_method_call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
