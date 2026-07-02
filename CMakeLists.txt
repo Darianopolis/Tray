@@ -35,7 +35,7 @@ target_link_libraries(tray-service PUBLIC PkgConfig::libdbus stdc++exp)
 
 add_executable(tray)
 target_compile_options(tray PUBLIC -std=c++26 -freflection)
-target_sources(tray PUBLIC src/tray.cpp)
+target_sources(tray PUBLIC src/icon.cpp src/tray.cpp)
 target_link_libraries(tray PUBLIC
     PkgConfig::SDL3
     PkgConfig::gtk

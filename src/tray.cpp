@@ -1,9 +1,10 @@
 #include <print>
 #include <functional>
 #include <memory>
-#include <cstring>
 #include <fstream>
 #include <ranges>
+#include <cstring>
+#include <cstdlib>
 
 #include "icon.hpp"
 #include "dbus.hpp"
@@ -40,6 +41,8 @@ struct Item
 DBusConnection*   g_bus;
 std::vector<Item> g_items;
 SDL_Renderer*     g_renderer;
+
+constexpr int s_icon_size = 32;
 
 // -----------------------------------------------------------------------------
 
@@ -198,7 +201,7 @@ auto load(const char* service, const char* object_path) -> Item
     if (auto icon_name = properties["IconName"].get_string().value_or(""); !icon_name.empty()) {
         TIME_SCOPE("  Icon loaded from IconName in {}");
 
-        item.icon = load_texture_from_icon_name(g_renderer, icon_name.c_str());
+        item.icon = load_texture_from_icon_name(g_renderer, s_icon_size, s_icon_size, icon_name.c_str());
     }
 
     if (auto pixmaps = properties["IconPixmap"]; pixmaps && !item.icon.tex) {
@@ -355,15 +358,13 @@ void frame()
     if (!ImGui::Begin("Tray", &dont_close, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize)) return;
 
     if (!dont_close || (ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_any_popup_open)) {
-        _exit(0);
+        exit(0);
     }
 
     bool space_pressed = ImGui::IsKeyPressed(ImGuiKey_Space);
 
     for (auto& item : g_items) {
-        const float ROW_H     = 32.0f;
-        const float ICON_SIZE = 32.0f;
-        const float H_PAD     = 3.0f;
+        constexpr float row_pad = 3.0f;
 
         auto id = std::format("##{}", item.unique);
 
@@ -382,7 +383,7 @@ void frame()
 
         if (item.icon.tex) {
             ImVec2 icon_pos(row_origin.x, row_origin.y);
-            ImVec2 icon_end(icon_pos.x + ICON_SIZE, icon_pos.y + ICON_SIZE);
+            ImVec2 icon_end(icon_pos.x + s_icon_size, icon_pos.y + s_icon_size);
             ImGui::GetWindowDrawList()->AddImage(
                 (ImTextureID)(intptr_t)item.icon.tex.get(),
                 icon_pos, icon_end);
@@ -391,8 +392,8 @@ void frame()
 
         if (!title.empty()) {
             float text_h    = ImGui::GetTextLineHeight();
-            float text_y    = row_origin.y + (ROW_H - text_h) * 0.5f;
-            float text_x    = row_origin.x + ICON_SIZE + H_PAD;
+            float text_y    = row_origin.y + (s_icon_size - text_h) * 0.5f;
+            float text_x    = row_origin.x + s_icon_size + row_pad;
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(text_x, text_y),
                 ImGui::GetColorU32(ImGuiCol_Text),
@@ -416,6 +417,7 @@ void frame()
 
 int main()
 {
+    init_icon_loader();
     SDL_Init(SDL_INIT_VIDEO);
 
     auto window = SDL_CreateWindow("Tray", 800, 400, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
