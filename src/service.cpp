@@ -37,8 +37,8 @@ int main()
             dbus::Iterator args(msg);
 
             auto object_path = std::string(args.get_string().value_or(""));
-            if (object_path.empty() || object_path == sender) {
-                std::println("  arg was service, replacing with /StatusNotifierItem");
+            if (object_path.empty() || object_path == sender || !object_path.starts_with("/")) {
+                std::println("  arg was not path, replacing with /StatusNotifierItem");
                 object_path = "/StatusNotifierItem";
             }
             std::println("  object_path: {}", object_path);
